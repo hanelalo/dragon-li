@@ -26,6 +26,7 @@ MVP 阶段提炼的核心系统规范已沉淀至 `specs/` 目录，作为后续
 
 ## 已完成变更 (Completed)
 
+- [x] **`change-09-app-layout-refactor`** - 重构 App 布局，移除左侧全局菜单，改为双栏聊天主导，新增底部悬浮抽屉配置入口（归档于 `archive/2026-04-06-change-09-app-layout-refactor`）
 - [x] **`change-05-p0-e2e-smoke-and-acceptance`** - 完成 P0 主链路端到端验收与测试用例收口（归档于 `archive/2026-04-06-change-05-e2e`）
 - [x] **`change-04-provider-settings-ui-core`** - 建立 Provider 配置页面闭环，支持 profile 管理与连通性验证（归档于 `archive/2026-04-05-p0-provider-settings-ui-core`）
 - [x] **`change-03-conversation-ui-core`** - 实现侧边栏会话列表、聊天流式渲染与输入框（归档于 `archive/2026-04-05-p0-chat-ui-core`）
