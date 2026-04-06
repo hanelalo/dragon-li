@@ -91,7 +91,7 @@ onMounted(async () => {
     await loadMessages(activeSessionId.value)
   }
 
-  unlistenStream = await listen('chat_stream_event', (event) => {
+  unlistenStream = await listen('chat_stream_event', async (event) => {
     const payload = event.payload
     if (!payload || !payload.event) return
 
@@ -99,16 +99,17 @@ onMounted(async () => {
     const msgIndex = messages.value.findIndex(m => m.request_id === request_id)
     if (msgIndex === -1) return
 
+    // Create a new reference so Vue's reactivity detects changes, or we can just mutate the object.
     const msg = messages.value[msgIndex]
 
     switch (streamEvent.type) {
       case 'reasoning':
-        if (!msg.reasoning_md) msg.reasoning_md = '';
-        msg.reasoning_md += streamEvent.text
+        msg.reasoning_md = (msg.reasoning_md || '') + streamEvent.text
+        messages.value[msgIndex] = msg
         break
       case 'delta':
-        if (!msg.content_md) msg.content_md = '';
-        msg.content_md += streamEvent.text
+        msg.content_md = (msg.content_md || '') + streamEvent.text
+        messages.value[msgIndex] = msg
         break
       case 'done':
         msg.status = 'ok'
@@ -116,14 +117,12 @@ onMounted(async () => {
         msg.tokens_out = streamEvent.payload?.tokens_out || 0
         msg.latency_ms = streamEvent.payload?.latency_ms || 0
         sendingState.value = false
-        invoke('message_create', { message: { ...msg, created_at: new Date().toISOString() } }).catch(console.error)
         break
       case 'aborted':
         msg.status = 'failed'
         msg.error_code = streamEvent.payload.code
         msg.error_message = streamEvent.payload.message
         sendingState.value = false
-        invoke('message_create', { message: { ...msg, created_at: new Date().toISOString() } }).catch(console.error)
         break
     }
   })
@@ -207,10 +206,13 @@ async function handleSendMessage(text, retryMessage = null) {
       content: m.content_md
     }))
 
+  // Base timestamp for current message pair
+  const baseTimestampMs = Date.now()
+
   // Create User Message
   if (!retryMessage) {
     const userMsg = {
-      id: `m_user_${Date.now()}`,
+      id: `m_user_${baseTimestampMs}`,
       session_id: activeSessionId.value,
       role: 'user',
       content_md: text,
@@ -225,7 +227,7 @@ async function handleSendMessage(text, retryMessage = null) {
       error_code: null,
       error_message: null,
       retryable: null,
-      created_at: new Date().toISOString()
+      created_at: new Date(baseTimestampMs).toISOString()
     }
     messages.value.push(userMsg)
     await invoke('message_create', { message: userMsg }).catch(console.error)
@@ -256,9 +258,9 @@ async function handleSendMessage(text, retryMessage = null) {
   }
 
   // Create Assistant Placeholder
-  const reqId = `req_${Date.now()}`
+  const reqId = retryMessage ? retryMessage.id.replace('m_ast_', '') : `req_${Date.now()}`
   const astMsg = {
-    id: `m_ast_${Date.now()}`,
+    id: `m_ast_${reqId}`,
     session_id: activeSessionId.value,
     role: 'assistant',
     content_md: '',
@@ -273,7 +275,7 @@ async function handleSendMessage(text, retryMessage = null) {
     error_code: null,
     error_message: null,
     retryable: null,
-    created_at: new Date().toISOString(),
+    created_at: new Date(baseTimestampMs + 10).toISOString(),
     request_id: reqId // For UI tracking
   }
   
@@ -286,6 +288,9 @@ async function handleSendMessage(text, retryMessage = null) {
   } else {
     messages.value.push(astMsg)
   }
+
+  // Pre-insert the assistant message to db with status 'streaming'
+  await invoke('message_create', { message: astMsg }).catch(console.error)
 
   sendingState.value = true
   lastError.value = null
@@ -317,14 +322,14 @@ async function handleSendMessage(text, retryMessage = null) {
       astMsg.error_code = res.error?.code || 'UNKNOWN'
       astMsg.error_message = res.error?.message || String(res.error)
       sendingState.value = false
-      invoke('message_create', { message: { ...astMsg, created_at: new Date().toISOString() } }).catch(console.error)
+      await invoke('message_create', { message: { ...astMsg, created_at: new Date(baseTimestampMs + 10).toISOString() } }).catch(console.error)
     }
   } catch (err) {
     astMsg.status = 'failed'
     astMsg.error_code = 'UNKNOWN_ERROR'
     astMsg.error_message = String(err)
     sendingState.value = false
-    invoke('message_create', { message: { ...astMsg, created_at: new Date().toISOString() } }).catch(console.error)
+    await invoke('message_create', { message: { ...astMsg, created_at: new Date(baseTimestampMs + 10).toISOString() } }).catch(console.error)
   }
 }
 

@@ -52,6 +52,7 @@ pub struct ExtractCandidatesInput {
 pub struct ReviewCandidateInput {
     pub candidate_id: String,
     pub action: String,
+    pub merge_target_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +84,7 @@ pub struct MemorySearchHit {
 pub struct LongTermMemoryItem {
     pub memory_id: String,
     pub candidate_type: String,
+    pub summary: String,
     pub tags: Vec<String>,
     pub confidence: f64,
     pub status: String,
@@ -97,6 +99,23 @@ pub struct MemoryDeleteRestoreResult {
     pub index_terms_affected: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoExtractedMemory {
+    pub summary: String,
+    #[serde(rename = "type_")]
+    pub type_: String,
+    pub tags: Vec<String>,
+    pub evidence: String,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoExtractionResult {
+    #[serde(default)]
+    pub memories: Vec<AutoExtractedMemory>,
+}
+
+#[derive(Clone)]
 pub struct MemoryPipeline {
     runtime_root: PathBuf,
     db_path: PathBuf,
@@ -171,29 +190,106 @@ impl MemoryPipeline {
         Ok(out)
     }
 
-    pub fn list_candidates(
+    pub fn save_extracted_candidates(
         &self,
         session_id: &str,
+        source_message_id: &str,
+        result: AutoExtractionResult,
+    ) -> Result<usize, MemoryError> {
+        if result.memories.is_empty() {
+            return Ok(0);
+        }
+        
+        self.validate_source_exists(session_id, source_message_id)?;
+
+        let mut conn = self.open_conn()?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| MemoryError::DbWriteFailed(e.to_string()))?;
+            
+        let mut count = 0;
+        let now = now_iso();
+        
+        for (idx, mem) in result.memories.into_iter().enumerate() {
+            // Deduplication Check (Naive: Highly similar summary in the same session)
+            let existing: Option<i64> = tx.query_row(
+                "SELECT 1 FROM memory_candidates WHERE session_id = ?1 AND summary = ?2 LIMIT 1",
+                params![session_id, mem.summary],
+                |r| r.get(0)
+            ).optional().unwrap_or(None);
+            
+            if existing.is_some() {
+                continue; // Skip duplicates
+            }
+
+            let id = format!("mc_{}_{}", now_unix_nanos(), idx);
+            let tags_json = serde_json::to_string(&mem.tags)
+                .map_err(|e| MemoryError::InvalidRequest(e.to_string()))?;
+                
+            tx.execute(
+                "INSERT INTO memory_candidates (
+                    id, session_id, source_message_id, type, summary, evidence, confidence,
+                    tags_json, status, created_at, updated_at, deleted_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?10, NULL)",
+                params![
+                    id,
+                    session_id,
+                    source_message_id,
+                    mem.type_,
+                    mem.summary,
+                    mem.evidence,
+                    mem.confidence,
+                    tags_json,
+                    now,
+                    now
+                ],
+            )
+            .map_err(|e| MemoryError::DbWriteFailed(e.to_string()))?;
+            count += 1;
+        }
+        
+        tx.commit()
+            .map_err(|e| MemoryError::DbWriteFailed(e.to_string()))?;
+            
+        Ok(count)
+    }
+
+    pub fn list_candidates(
+        &self,
+        session_id: Option<&str>,
         status: Option<&str>,
     ) -> Result<Vec<MemoryCandidateRecord>, MemoryError> {
         let conn = self.open_conn()?;
-        let sql = if status.is_some() {
-            "SELECT id, session_id, source_message_id, type, summary, evidence, confidence, tags_json, status, created_at, updated_at
-             FROM memory_candidates WHERE session_id = ?1 AND status = ?2 AND deleted_at IS NULL ORDER BY created_at DESC"
-        } else {
-            "SELECT id, session_id, source_message_id, type, summary, evidence, confidence, tags_json, status, created_at, updated_at
-             FROM memory_candidates WHERE session_id = ?1 AND deleted_at IS NULL ORDER BY created_at DESC"
-        };
+        
+        let mut conditions = vec!["deleted_at IS NULL".to_string()];
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        
+        if let Some(sid) = session_id {
+            conditions.push(format!("session_id = ?{}", params_vec.len() + 1));
+            params_vec.push(Box::new(sid.to_string()));
+        }
+        
+        if let Some(s) = status {
+            conditions.push(format!("status = ?{}", params_vec.len() + 1));
+            params_vec.push(Box::new(s.to_string()));
+        }
+        
+        let sql = format!(
+            "SELECT id, session_id, source_message_id, type as candidate_type, summary, evidence, confidence, tags_json, status, created_at, updated_at
+             FROM memory_candidates WHERE {} ORDER BY created_at DESC",
+            conditions.join(" AND ")
+        );
+        
         let mut stmt = conn
-            .prepare(sql)
+            .prepare(&sql)
             .map_err(|e| MemoryError::DbReadFailed(e.to_string()))?;
 
-        let rows = if let Some(s) = status {
-            stmt.query_map(params![session_id, s], map_candidate_row)
-        } else {
-            stmt.query_map(params![session_id], map_candidate_row)
-        }
-        .map_err(|e| MemoryError::DbReadFailed(e.to_string()))?;
+        // Convert the dynamic params into the form expected by rusqlite
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(params_refs.as_slice(), map_candidate_row)
+            .map_err(|e| MemoryError::DbReadFailed(e.to_string()))?;
 
         let mut out = Vec::new();
         for row in rows {
@@ -202,7 +298,20 @@ impl MemoryPipeline {
         Ok(out)
     }
 
+    pub fn count_pending_candidates(&self) -> Result<usize, MemoryError> {
+        let conn = self.open_conn()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_candidates WHERE status = 'pending' AND deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| MemoryError::DbReadFailed(e.to_string()))?;
+        
+        Ok(count as usize)
+    }
+
     pub fn review_candidate(&self, input: ReviewCandidateInput) -> Result<MemoryDoc, MemoryError> {
+        tracing::info!("Reviewing candidate: {:?}", input);
         let action = input.action.to_lowercase();
         if action != "approve" && action != "reject" && action != "merge" {
             return Err(MemoryError::InvalidRequest(
@@ -214,6 +323,7 @@ impl MemoryPipeline {
 
         match action.as_str() {
             "reject" => {
+                tracing::info!("Action: reject for candidate {}", candidate.id);
                 let conn = self.open_conn()?;
                 conn.execute(
                     "UPDATE memory_candidates SET status = 'rejected', updated_at = ?2 WHERE id = ?1",
@@ -227,6 +337,7 @@ impl MemoryPipeline {
                 Ok(MemoryDoc::from_candidate(candidate, String::new()))
             }
             "approve" => {
+                tracing::info!("Action: approve for candidate {}", candidate.id);
                 let version = self.next_markdown_version(&candidate.id);
                 let markdown = build_markdown(&candidate, version);
                 self.write_memory_markdown_atomic(&candidate.id, &markdown)?;
@@ -248,25 +359,108 @@ impl MemoryPipeline {
                 Ok(MemoryDoc::from_candidate(candidate, markdown))
             }
             "merge" => {
-                let version = self.next_markdown_version(&candidate.id);
+                tracing::info!("Action: merge for candidate {}", candidate.id);
+                let target_id = match input.merge_target_id {
+                    Some(id) => {
+                        tracing::info!("Merge target id provided: {}", id);
+                        id
+                    },
+                    None => {
+                        tracing::error!("merge_target_id is missing");
+                        return Err(MemoryError::InvalidRequest("merge_target_id is required for merge action".to_string()));
+                    }
+                };
+                
+                // Ensure target exists
+                tracing::info!("Fetching target candidate: {}", target_id);
+                let _target = match self.get_candidate(&target_id) {
+                    Ok(t) => {
+                        tracing::info!("Target candidate found: {:?}", t.id);
+                        t
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to fetch target candidate: {:?}", e);
+                        return Err(e);
+                    }
+                };
+                
+                // Write the new version markdown using the target_id
+                let version = self.next_markdown_version(&target_id);
+                tracing::info!("Next markdown version for target {}: {}", target_id, version);
                 let markdown = build_markdown(&candidate, version);
-                self.write_memory_markdown_atomic(&candidate.id, &markdown)?;
+                if let Err(e) = self.write_memory_markdown_atomic(&target_id, &markdown) {
+                    tracing::error!("Failed to write markdown for target: {:?}", e);
+                    return Err(e);
+                }
 
                 let mut conn = self.open_conn()?;
                 let tx = conn
                     .transaction()
-                    .map_err(|e| MemoryError::DbWriteFailed(e.to_string()))?;
+                    .map_err(|e| {
+                        tracing::error!("Failed to start transaction: {:?}", e);
+                        MemoryError::DbWriteFailed(e.to_string())
+                    })?;
+                
+                // Note: The sqlite table has a CHECK constraint: status IN ('pending', 'approved', 'rejected', 'conflicted').
+                // We cannot use 'merged' because it violates this constraint.
+                // We'll mark it as 'rejected' (or 'approved' then soft-deleted), but the simplest way to hide it is 'rejected' or 'conflicted'.
+                // Since it's a consumed candidate, let's mark it 'rejected' with a comment, or better yet, just 'conflicted'.
+                // Actually, let's just delete it since it's merged into another one.
+                tracing::info!("Updating candidate {} status to rejected (merged)", candidate.id);
                 tx.execute(
-                    "UPDATE memory_candidates SET status = 'conflicted', updated_at = ?2 WHERE id = ?1",
+                    "UPDATE memory_candidates SET status = 'rejected', updated_at = ?2 WHERE id = ?1",
                     params![candidate.id, now],
                 )
-                .map_err(|e| MemoryError::DbWriteFailed(e.to_string()))?;
-                candidate.status = "conflicted".to_string();
-                candidate.updated_at = now.clone();
-                self.upsert_index_tx(&tx, &candidate, &now)?;
+                .map_err(|e| {
+                    tracing::error!("Failed to update candidate status: {:?}", e);
+                    MemoryError::DbWriteFailed(e.to_string())
+                })?;
+                
+                // Update the target memory with the new content and status 'conflicted'
+                tracing::info!("Updating target {} with new content", target_id);
+                tx.execute(
+                    "UPDATE memory_candidates SET summary = ?3, evidence = ?4, tags_json = ?5, status = 'conflicted', updated_at = ?2 WHERE id = ?1",
+                    params![
+                        target_id, 
+                        now, 
+                        candidate.summary, 
+                        candidate.evidence,
+                        serde_json::to_string(&candidate.tags).unwrap_or_default()
+                    ],
+                )
+                .map_err(|e| {
+                    tracing::error!("Failed to update target candidate: {:?}", e);
+                    MemoryError::DbWriteFailed(e.to_string())
+                })?;
+                
+                // We must update the index for the target_id, so we need the target candidate record updated with new info
+                tracing::info!("Fetching updated target for index upsert");
+                // Note: get_candidate uses a separate connection, so it won't see uncommitted tx changes.
+                // We must construct the updated target manually or use the tx.
+                let mut updated_target = _target.clone();
+                updated_target.summary = candidate.summary.clone();
+                updated_target.evidence = candidate.evidence.clone();
+                updated_target.tags = candidate.tags.clone();
+                updated_target.status = "conflicted".to_string();
+                updated_target.updated_at = now.clone();
+
+                tracing::info!("Upserting index for target {}", target_id);
+                if let Err(e) = self.upsert_index_tx(&tx, &updated_target, &now) {
+                    tracing::error!("Failed to upsert index: {:?}", e);
+                    return Err(e);
+                }
+                
+                tracing::info!("Committing transaction");
                 tx.commit()
-                    .map_err(|e| MemoryError::DbWriteFailed(e.to_string()))?;
-                Ok(MemoryDoc::from_candidate(candidate, markdown))
+                    .map_err(|e| {
+                        tracing::error!("Failed to commit transaction: {:?}", e);
+                        MemoryError::DbWriteFailed(e.to_string())
+                    })?;
+                    
+                candidate.status = "merged".to_string();
+                candidate.updated_at = now.clone();
+                tracing::info!("Merge successful");
+                Ok(MemoryDoc::from_candidate(updated_target, markdown))
             }
             _ => Err(MemoryError::InvalidRequest("unsupported action".to_string())),
         }
@@ -346,7 +540,7 @@ impl MemoryPipeline {
     ) -> Result<Vec<LongTermMemoryItem>, MemoryError> {
         let conn = self.open_conn()?;
         let mut sql = String::from(
-            "SELECT d.memory_id, d.type, d.tags_json, d.confidence, c.status, d.updated_at
+            "SELECT d.memory_id, d.type, d.tags_json, d.confidence, c.status, d.updated_at, c.summary
              FROM memory_index_docs d
              JOIN memory_candidates c ON c.id = d.memory_id
              WHERE d.deleted_at IS NULL AND d.confidence >= ?1",
@@ -376,6 +570,7 @@ impl MemoryPipeline {
                     confidence: r.get(3)?,
                     status: r.get(4)?,
                     updated_at: r.get(5)?,
+                    summary: r.get(6)?,
                 })
             })
             .map_err(|e| MemoryError::DbReadFailed(e.to_string()))?;
@@ -475,7 +670,7 @@ impl MemoryPipeline {
         let conn = self.open_conn()?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, session_id, source_message_id, type, summary, evidence, confidence, tags_json, status, created_at, updated_at
+                "SELECT id, session_id, source_message_id, type as candidate_type, summary, evidence, confidence, tags_json, status, created_at, updated_at
                  FROM memory_candidates WHERE id = ?1 AND deleted_at IS NULL",
             )
             .map_err(|e| MemoryError::DbReadFailed(e.to_string()))?;
@@ -490,7 +685,7 @@ impl MemoryPipeline {
         let conn = self.open_conn()?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, session_id, source_message_id, type, summary, evidence, confidence, tags_json, status, created_at, updated_at, deleted_at
+                "SELECT id, session_id, source_message_id, type as candidate_type, summary, evidence, confidence, tags_json, status, created_at, updated_at, deleted_at
                  FROM memory_candidates WHERE id = ?1",
             )
             .map_err(|e| MemoryError::DbReadFailed(e.to_string()))?;
@@ -1113,6 +1308,55 @@ mod tests {
             .join("versions");
         assert!(version_dir.join(format!("{}.v1.md", merged.memory_id)).exists());
         assert!(version_dir.join(format!("{}.v2.md", merged.memory_id)).exists());
+
+        std::fs::remove_file(db_path).ok();
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn save_extracted_candidates_works_and_deduplicates() {
+        let (root, db_path, pipeline) = setup();
+        let uid = root
+            .file_name()
+            .and_then(|x| x.to_str())
+            .unwrap_or_default()
+            .replace("dragon-li-memory-", "");
+            
+        let session_id = format!("s1-{uid}");
+        let msg_id = format!("m1-{uid}");
+        
+        let result = AutoExtractionResult {
+            memories: vec![
+                AutoExtractedMemory {
+                    summary: "User prefers dark mode".to_string(),
+                    type_: "preference".to_string(),
+                    tags: vec!["ui".to_string(), "dark mode".to_string()],
+                    evidence: "I like dark mode".to_string(),
+                    confidence: 0.9,
+                },
+                AutoExtractedMemory {
+                    summary: "User is building a Tauri app".to_string(),
+                    type_: "project".to_string(),
+                    tags: vec!["tauri".to_string(), "rust".to_string()],
+                    evidence: "I'm working on a Tauri app".to_string(),
+                    confidence: 0.85,
+                }
+            ]
+        };
+        
+        // 1. Test insertion
+        let count = pipeline.save_extracted_candidates(&session_id, &msg_id, result.clone()).expect("save ok");
+        assert_eq!(count, 2);
+        
+        let list = pipeline.list_candidates(&session_id, Some("pending")).expect("list ok");
+        assert_eq!(list.len(), 2);
+        
+        // 2. Test deduplication (same summary in same session should be skipped)
+        let dup_count = pipeline.save_extracted_candidates(&session_id, &msg_id, result).expect("save dup ok");
+        assert_eq!(dup_count, 0); // No new rows inserted
+        
+        let list_after_dup = pipeline.list_candidates(&session_id, Some("pending")).expect("list ok");
+        assert_eq!(list_after_dup.len(), 2); // Still 2
 
         std::fs::remove_file(db_path).ok();
         std::fs::remove_dir_all(root).ok();

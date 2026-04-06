@@ -6,7 +6,7 @@ mod sqlite_store;
 
 use chat_provider::{error_to_parts, ChatRequestInput, ChatService, ChatStreamEvent, HttpTransport};
 use config_guardrails::{config_to_json, ApiProfilesConfig, ConfigError, Provider};
-use memory_pipeline::{ExtractCandidatesInput, MemoryError, ReviewCandidateInput};
+use memory_pipeline::{AutoExtractionResult, ExtractCandidatesInput, MemoryError, ReviewCandidateInput};
 use runtime::{runtime_bootstrap_payload, ApiResponse, AppState};
 use serde::Serialize;
 use serde_json::json;
@@ -480,7 +480,31 @@ async fn chat_summarize_title(
             session_id: None,
             model: Some(model),
             prompt: chat_provider::ChatPromptLayer {
-                system: "You are a strict title generator. Your ONLY task is to extract a highly concise title (1 to 6 words) from the user's text.\nCRITICAL RULES:\n1. The title MUST be in the exact same language as the user's text. (e.g., if user text is Chinese, title must be Chinese).\n2. DO NOT answer the user's questions.\n3. DO NOT output thinking processes or conversational fillers.\n4. Output ONLY the title text itself, with no quotes or punctuation.".to_string(),
+                system: "# Role\n\
+                         You are a strict title generator for chat sessions.\n\
+                         \n\
+                         # Task\n\
+                         Your ONLY task is to extract a highly concise title (1 to 6 words) from the user's first message.\n\
+                         \n\
+                         # Do\n\
+                         - Keep the title between 1 to 6 words.\n\
+                         - Match the EXACT SAME LANGUAGE as the user's text (e.g., if user text is Chinese, title must be Chinese).\n\
+                         - Capture the core intent or topic of the message.\n\
+                         \n\
+                         # Do Not\n\
+                         - DO NOT answer the user's questions or engage in conversation.\n\
+                         - DO NOT output thinking processes, conversational fillers, or explanations.\n\
+                         - DO NOT wrap the title in quotes or punctuation.\n\
+                         \n\
+                         # Output\n\
+                         Output ONLY the title text itself.\n\
+                         \n\
+                         # Examples\n\
+                         User text: \"帮我用 Rust 写一个读取本地文件的函数\"\n\
+                         Title: Rust 文件读取函数\n\
+                         \n\
+                         User text: \"What is the capital of France?\"\n\
+                         Title: Capital of France".to_string(),
                 runtime: "".to_string(),
                 memory: "".to_string(),
                 user: format!("User text:\n<text>\n{}\n</text>\n\nGenerate title in the EXACT SAME LANGUAGE as the text above:", user_text),
@@ -638,9 +662,12 @@ fn chat_send(
     let app_clone = app.clone();
     let resolved_provider_clone = resolved_provider.clone();
     let resolved_model_clone = resolved_model.clone();
+    
+    // Clone cheap components from AppState so we can move them to 'static closures
+    let sqlite_store = state.sqlite_store.clone();
+    let memory_pipeline = state.memory_pipeline.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        let state_clone = app_clone.state::<AppState>();
         let service = ChatService::new(HttpTransport);
         let mut emit_stream = |event: &ChatStreamEvent| {
             if let Err(e) = app_clone.emit(
@@ -677,8 +704,24 @@ fn chat_send(
                     error!("Failed to emit chat_stream_event done payload: {}", e);
                 }
 
-                let _ = state_clone.sqlite_store.init_schema();
-                if let Err(err) = state_clone.sqlite_store.create_request_log(&NewRequestLog {
+                // Update the message in DB to ensure it's saved even if frontend disconnects
+                let msg_id = format!("m_ast_{}", request.request_id);
+                if let Err(e) = sqlite_store.update_message_completion(
+                    &msg_id,
+                    &result.output_text,
+                    &result.reasoning_text,
+                    "ok",
+                    Some(result.tokens_in as i64),
+                    Some(result.tokens_out as i64),
+                    Some(latency_ms),
+                    None,
+                    None,
+                ) {
+                    error!("Failed to update message completion in DB: {}", e);
+                }
+
+                let _ = sqlite_store.init_schema();
+                if let Err(err) = sqlite_store.create_request_log(&NewRequestLog {
                     id: next_log_id(&request.request_id, "ok"),
                     request_id: request.request_id.clone(),
                     session_id: request.session_id.clone(),
@@ -693,6 +736,144 @@ fn chat_send(
                 }) {
                     error!("Failed to log request success: {}", err);
                 }
+
+                // Fire-and-forget task for auto-extracting memories
+                let app_for_bg = app_clone.clone();
+                let sqlite_for_bg = sqlite_store.clone();
+                let memory_for_bg = memory_pipeline.clone();
+                let session_id_for_bg = request.session_id.clone();
+                let request_id_for_bg = request.request_id.clone();
+                let cfg_for_bg = cfg.clone();
+
+                let user_text_for_bg = request.prompt.user.clone();
+                let assistant_text_for_bg = result.output_text.clone();
+                let history_for_bg = request.history.clone();
+
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Some(session_id) = session_id_for_bg {
+                        match sqlite_for_bg.get_latest_user_message(&session_id) {
+                            Ok(user_msg) => {
+                                info!("Starting auto memory extraction for session: {}", session_id);
+                                
+                                let extract_req = ChatRequestInput {
+                                    profile_id: request.profile_id.clone(),
+                                    request_id: format!("auto_extract_{}", request_id_for_bg),
+                                    session_id: Some(session_id.clone()),
+                                    model: request.model.clone(),
+                                    prompt: chat_provider::ChatPromptLayer {
+                                        system: "# Role\n\
+                                                 You are an intelligent memory extraction engine for a personal AI assistant.\n\
+                                                 \n\
+                                                 # Task\n\
+                                                 Your task is to extract ANY enduring, persistent, or long-term relevant information from the user's LATEST message.\n\
+                                                 \n\
+                                                 # Context\n\
+                                                 The user is interacting with an AI assistant. To provide personalized responses in future conversations, the AI needs to remember important details about the user.\n\
+                                                 You are provided with the conversation history and the latest exchange (User and Assistant).\n\
+                                                 \n\
+                                                 # Do\n\
+                                                 - Compare the LATEST user message against the provided history. Extract the information ONLY if it's new or updates previous knowledge.\n\
+                                                 - Extract EACH distinct piece of information as a separate memory object.\n\
+                                                 - Categorize the extracted memory into one of the following types:\n\
+                                                   * 'fact': Personal attributes, background, environment. (e.g., 'User is 28 years old', 'User lives in Beijing', 'User has a dog named Max', 'User uses a Mac')\n\
+                                                   * 'preference': Likes, dislikes, communication style, formatting rules. (e.g., 'User prefers Python over Java', 'User wants responses in bullet points', 'User hates emojis')\n\
+                                                   * 'constraint': Limitations, allergies, non-negotiables. (e.g., 'User is allergic to peanuts', 'User has a $500 budget', 'User cannot use cloud services due to compliance')\n\
+                                                   * 'project': Ongoing work, goals, long-term endeavors. (e.g., 'User is building a personal website', 'User is studying for the AWS exam')\n\
+                                                   * 'task': Specific actionable items the user needs to do or requested the AI to remember. (e.g., 'User needs to renew passport by next month')\n\
+                                                 - Write the `summary` as a concise, 3rd-person statement (e.g., 'User prefers Python over Java').\n\
+                                                 \n\
+                                                 # Do Not\n\
+                                                 - DO NOT extract conversational filler, temporary states, or context-dependent information (e.g., 'User is tired today', 'User wants a joke').\n\
+                                                 - DO NOT extract information about OTHER PEOPLE unless it directly impacts the user's constraints or projects (e.g., if user says 'My friend has a headache', DO NOT extract. If user says 'I cannot eat peanuts because my son is allergic', extract as user's constraint).\n\
+                                                 - DO NOT extract information that is already present in the conversation history unless it's an update or contradiction.\n\
+                                                 - DO NOT hallucinate or infer information that is not explicitly stated by the user.\n\
+                                                 \n\
+                                                 # Output\n\
+                                                 You MUST return a JSON object strictly matching this schema:\n\
+                                                 {\n\
+                                                   \"memories\": [\n\
+                                                     {\n\
+                                                       \"type_\": \"fact\" | \"preference\" | \"constraint\" | \"project\" | \"task\",\n\
+                                                       \"summary\": \"Concise, 3rd-person statement\",\n\
+                                                       \"evidence\": \"exact quote from the user\",\n\
+                                                       \"tags\": [\"keyword1\", \"keyword2\"],\n\
+                                                       \"confidence\": 0.9\n\
+                                                     }\n\
+                                                   ]\n\
+                                                 }\n\
+                                                 If absolutely no long-term relevant facts, preferences, or personal details are found, return {\"memories\": []}.\n\
+                                                 \n\
+                                                 # Examples\n\
+                                                 \n\
+                                                 Example 1 (Personal Background):\n\
+                                                 User said: \"我今年28岁，是个后端开发。最近打算学 Rust。\"\n\
+                                                 Assistant replied: \"加油，Rust 是门很棒的语言！\"\n\
+                                                 Extract new memories:\n\
+                                                 {\n\
+                                                   \"memories\": [\n\
+                                                     {\"type_\": \"fact\", \"summary\": \"User is 28 years old\", \"evidence\": \"我今年28岁\", \"tags\": [\"age\", \"28\"], \"confidence\": 1.0},\n\
+                                                     {\"type_\": \"fact\", \"summary\": \"User is a backend developer\", \"evidence\": \"是个后端开发\", \"tags\": [\"occupation\", \"backend developer\"], \"confidence\": 1.0},\n\
+                                                     {\"type_\": \"project\", \"summary\": \"User is planning to learn Rust\", \"evidence\": \"最近打算学 Rust\", \"tags\": [\"learning\", \"Rust\"], \"confidence\": 0.9}\n\
+                                                   ]\n\
+                                                 }\n\
+                                                 \n\
+                                                 Example 2 (Habits & Health):\n\
+                                                 User said: \"我每天晚上习惯喝杯牛奶，不过最近胃不太好，医生让我少吃辛辣的。我老婆这几天感冒了。\"\n\
+                                                 Assistant replied: \"那你可得多注意休息，照顾好自己和家人。\"\n\
+                                                 Extract new memories:\n\
+                                                 {\n\
+                                                   \"memories\": [\n\
+                                                     {\"type_\": \"preference\", \"summary\": \"User has a habit of drinking milk every night\", \"evidence\": \"每天晚上习惯喝杯牛奶\", \"tags\": [\"habit\", \"diet\"], \"confidence\": 0.9},\n\
+                                                     {\"type_\": \"constraint\", \"summary\": \"User has stomach issues and must avoid spicy food\", \"evidence\": \"胃不太好，医生让我少吃辛辣的\", \"tags\": [\"health\", \"dietary restriction\"], \"confidence\": 1.0}\n\
+                                                   ]\n\
+                                                 }\n\
+                                                 \n\
+                                                 Example 3 (Asking for others vs Temporary State):\n\
+                                                 User said: \"今天天气真不错，心情很好。另外，如果我朋友得了糖尿病，饮食上该注意什么？\"\n\
+                                                 Assistant replied: \"糖尿病饮食需要注意低糖高纤维...\"\n\
+                                                 Extract new memories:\n\
+                                                 {\n\
+                                                   \"memories\": []\n\
+                                                 }".to_string(),
+                                        runtime: "".to_string(),
+                                        memory: "".to_string(),
+                                        user: format!("User said: {}\n\nAssistant replied: {}\n\nExtract new memories:", user_text_for_bg, assistant_text_for_bg),
+                                    },
+                                    history: history_for_bg,
+                                };
+
+                                let extraction_service = ChatService::new(HttpTransport);
+                                match extraction_service.chat_with_retry_json::<AutoExtractionResult>(&extract_req, &cfg_for_bg) {
+                                    Ok(res) => {
+                                        if !res.memories.is_empty() {
+                                            match memory_for_bg.save_extracted_candidates(&session_id, &user_msg.id, res) {
+                                                Ok(count) if count > 0 => {
+                                                    info!("Auto-extracted {} memories for session {}", count, session_id);
+                                                    if let Ok(unreviewed_count) = memory_for_bg.count_pending_candidates() {
+                                                        if let Err(e) = app_for_bg.emit("memory_candidates_updated", json!({
+                                                            "unreviewed_count": unreviewed_count,
+                                                            "new_memories": count
+                                                        })) {
+                                                            error!("Failed to emit memory_candidates_updated: {}", e);
+                                                        }
+                                                    }
+                                                }
+                                                Ok(_) => {
+                                                    info!("Auto-extracted memories were skipped (duplicates) for session {}", session_id);
+                                                }
+                                                Err(e) => error!("Failed to save extracted memories: {}", e),
+                                            }
+                                        } else {
+                                            info!("No new memories found by LLM for session {}", session_id);
+                                        }
+                                    }
+                                    Err(e) => error!("Auto extraction request failed: {}", e),
+                                }
+                            }
+                            Err(e) => error!("Failed to get latest user message for auto extraction: {}", e),
+                        }
+                    }
+                });
             }
             Err(err) => {
                 error!("Chat request failed: {}", err);
@@ -702,13 +883,30 @@ fn chat_send(
                     message: message.clone(),
                     retryable,
                 });
+                
+                let latency_ms = started.elapsed().as_millis() as i64;
+                let msg_id = format!("m_ast_{}", request.request_id);
+                if let Err(e) = sqlite_store.update_message_completion(
+                    &msg_id,
+                    "",
+                    "",
+                    "failed",
+                    None,
+                    None,
+                    Some(latency_ms),
+                    Some(&code),
+                    Some(&message),
+                ) {
+                    error!("Failed to update message failure in DB: {}", e);
+                }
+
                 if let Err(write_err) = create_chat_failure_log(
-                    &state_clone.sqlite_store,
+                    &sqlite_store,
                     &request,
                     resolved_provider_clone,
                     resolved_model_clone,
                     &code,
-                    started.elapsed().as_millis() as i64,
+                    latency_ms,
                 ) {
                     error!("Failed to log request failure: {}", write_err);
                 }
@@ -734,14 +932,22 @@ fn memory_extract_candidates(
 }
 
 #[tauri::command]
+fn memory_count_pending(state: tauri::State<'_, AppState>) -> ApiResponse {
+    match state.memory_pipeline.count_pending_candidates() {
+        Ok(count) => ApiResponse::ok(json!({ "count": count })),
+        Err(err) => map_memory_error(err),
+    }
+}
+
+#[tauri::command]
 fn memory_list_candidates(
     state: tauri::State<'_, AppState>,
-    session_id: String,
+    session_id: Option<String>,
     status: Option<String>,
 ) -> ApiResponse {
     match state
         .memory_pipeline
-        .list_candidates(&session_id, status.as_deref())
+        .list_candidates(session_id.as_deref(), status.as_deref())
     {
         Ok(candidates) => ApiResponse::ok(json!({ "candidates": candidates })),
         Err(err) => map_memory_error(err),
@@ -1015,6 +1221,7 @@ fn main() {
             chat_send,
             memory_extract_candidates,
             memory_list_candidates,
+            memory_count_pending,
             memory_review_candidate,
             memory_soft_delete,
             memory_restore,

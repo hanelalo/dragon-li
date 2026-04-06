@@ -242,6 +242,7 @@ pub struct DeleteRestoreResult {
     pub memory_candidates_affected: usize,
 }
 
+#[derive(Clone)]
 pub struct SqliteStore {
     db_path: PathBuf,
 }
@@ -307,6 +308,47 @@ impl SqliteStore {
         collect_rows(rows).map_err(|e| StoreError::DbReadFailed(e.to_string()))
     }
 
+    pub fn get_latest_user_message(
+        &self,
+        session_id: &str,
+    ) -> Result<MessageRecord, StoreError> {
+        let conn = self.open_conn().map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, session_id, role, content_md, reasoning_md, provider, model, tokens_in, tokens_out, latency_ms,
+                        parent_message_id, status, error_code, error_message, retryable, created_at, deleted_at
+                 FROM messages
+                 WHERE session_id = ?1 AND role = 'user' AND deleted_at IS NULL
+                 ORDER BY created_at DESC
+                 LIMIT 1",
+            )
+            .map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
+        let msg = stmt
+            .query_row([session_id], |r| {
+                Ok(MessageRecord {
+                    id: r.get(0)?,
+                    session_id: r.get(1)?,
+                    role: r.get(2)?,
+                    content_md: r.get(3)?,
+                    reasoning_md: r.get(4)?,
+                    provider: r.get(5)?,
+                    model: r.get(6)?,
+                    tokens_in: r.get(7)?,
+                    tokens_out: r.get(8)?,
+                    latency_ms: r.get(9)?,
+                    parent_message_id: r.get(10)?,
+                    status: r.get(11)?,
+                    error_code: r.get(12)?,
+                    error_message: r.get(13)?,
+                    retryable: r.get(14)?,
+                    created_at: r.get(15)?,
+                    deleted_at: r.get(16)?,
+                })
+            })
+            .map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
+        Ok(msg)
+    }
+
     pub fn update_session_title(
         &self,
         session_id: &str,
@@ -346,7 +388,7 @@ impl SqliteStore {
         }
 
         conn.execute(
-            "INSERT INTO messages (
+            "INSERT OR REPLACE INTO messages (
                 id, session_id, role, content_md, reasoning_md, provider, model,
                 tokens_in, tokens_out, latency_ms, parent_message_id, status,
                 error_code, error_message, retryable, created_at, deleted_at
@@ -372,6 +414,30 @@ impl SqliteStore {
         )
         .map_err(map_write_error)?;
         Ok(())
+    }
+
+    pub fn update_message_completion(
+        &self,
+        msg_id: &str,
+        content_md: &str,
+        reasoning_md: &str,
+        status: &str,
+        tokens_in: Option<i64>,
+        tokens_out: Option<i64>,
+        latency_ms: Option<i64>,
+        error_code: Option<&str>,
+        error_message: Option<&str>,
+    ) -> Result<(), StoreError> {
+        with_busy_retry(|| {
+            let conn = self.open_conn()?;
+            conn.execute(
+                "UPDATE messages 
+                 SET content_md = ?1, reasoning_md = ?2, status = ?3, tokens_in = ?4, tokens_out = ?5, latency_ms = ?6, error_code = ?7, error_message = ?8
+                 WHERE id = ?9 AND deleted_at IS NULL",
+                params![content_md, reasoning_md, status, tokens_in, tokens_out, latency_ms, error_code, error_message, msg_id],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn list_messages(&self, session_id: &str) -> Result<Vec<MessageRecord>, StoreError> {

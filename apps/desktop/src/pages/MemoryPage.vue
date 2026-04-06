@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { appState } from '../state/appState'
 
@@ -41,48 +41,17 @@ const filters = reactive({
 
 const candidates = ref([])
 const longTermItems = ref([])
-const streamLog = ref([])
 
 const selectedCandidate = computed(() =>
   candidates.value.find((candidate) => candidate.id === selectedCandidateId.value) || null
 )
 
-async function call(name, payload = {}) {
-  return invoke(name, payload)
+function handleMemoryCandidatesRefreshed() {
+  loadCandidates()
 }
 
-async function ensureSeedData() {
-  await call('db_init')
-  await call('session_create', {
-    session: {
-      id: sessionId.value,
-      title: 'Memory Center Session',
-      status: 'active',
-      default_provider: null,
-      default_model: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }
-  }).catch(() => {})
-  await call('message_create', {
-    message: {
-      id: `m_seed_${Date.now()}`,
-      session_id: sessionId.value,
-      role: 'assistant',
-      content_md: 'Seed message for memory extraction.',
-      provider: null,
-      model: null,
-      tokens_in: null,
-      tokens_out: null,
-      latency_ms: null,
-      parent_message_id: null,
-      status: 'ok',
-      error_code: null,
-      error_message: null,
-      retryable: null,
-      created_at: new Date().toISOString()
-    }
-  }).catch(() => {})
+async function call(name, payload = {}) {
+  return invoke(name, payload)
 }
 
 async function loadCandidates() {
@@ -90,8 +59,8 @@ async function loadCandidates() {
   errors.candidates = ''
   try {
     const result = await call('memory_list_candidates', {
-      sessionId: sessionId.value,
-      status: null
+      sessionId: null, // Load candidates from all sessions
+      status: 'pending' // Only show pending candidates for review
     })
     candidates.value = result?.data?.candidates || []
     if (!selectedCandidateId.value && candidates.value.length > 0) {
@@ -194,17 +163,31 @@ async function extractCandidates() {
 
 async function reviewCandidate(action) {
   if (!selectedCandidateId.value) return
+  
+  const payload = {
+    candidate_id: selectedCandidateId.value,
+    action
+  }
+  
+  if (action === 'merge') {
+    if (!selectedMemoryId.value) {
+      errors.review = 'Please select a target long-term memory on the right first'
+      return
+    }
+    payload.merge_target_id = selectedMemoryId.value
+  }
+
   loading.review = true
   errors.review = ''
   try {
-    const result = await call('memory_review_candidate', {
-      input: {
-        candidate_id: selectedCandidateId.value,
-        action
-      }
-    })
+    const result = await call('memory_review_candidate', { input: payload })
     const memory = result?.data?.memory
-    streamLog.value.unshift(`[${new Date().toLocaleTimeString()}] ${action} -> ${selectedCandidateId.value}`)
+    
+    // Decrement the unreviewed memory badge count on successful review
+    if (appState.memory.unreviewedCount > 0) {
+      appState.memory.unreviewedCount--
+    }
+
     if (action === 'reject') {
       // Clear selection after reject to refresh view properly
       selectedCandidateId.value = ''
@@ -251,8 +234,12 @@ function statusClass(status) {
 }
 
 onMounted(async () => {
-  await ensureSeedData()
+  window.addEventListener('memory-candidates-refreshed', handleMemoryCandidatesRefreshed)
   await Promise.all([loadCandidates(), loadLongTerm()])
+})
+
+onUnmounted(() => {
+  window.removeEventListener('memory-candidates-refreshed', handleMemoryCandidatesRefreshed)
 })
 </script>
 
@@ -264,10 +251,6 @@ onMounted(async () => {
     </header>
 
     <section class="toolbar">
-      <div class="field wide">
-        <label>Session ID</label>
-        <input v-model="sessionId" />
-      </div>
       <div class="field">
         <label>Type</label>
         <select v-model="filters.type">
@@ -304,7 +287,7 @@ onMounted(async () => {
       <button class="primary" @click="loadLongTerm">Apply Filters</button>
     </section>
 
-    <section class="extract-box">
+    <section class="extract-box" v-if="false">
       <label>Extract Candidate Input</label>
       <textarea v-model="extractInput" rows="3" />
       <div class="row">
@@ -333,13 +316,13 @@ onMounted(async () => {
               <span :class="statusClass(item.status)">{{ item.status }}</span>
             </div>
             <p>{{ item.summary }}</p>
-            <small>conf: {{ item.confidence.toFixed(2) }}</small>
+            <small>conf: {{ item.confidence?.toFixed(2) }}</small>
           </li>
         </ul>
         <div class="actions">
           <button :disabled="!selectedCandidateId || loading.review" @click="reviewCandidate('approve')">Approve</button>
           <button :disabled="!selectedCandidateId || loading.review" @click="reviewCandidate('reject')">Reject</button>
-          <button :disabled="!selectedCandidateId || loading.review" @click="reviewCandidate('merge')">Merge (Versioned)</button>
+          <button :disabled="!selectedCandidateId || !selectedMemoryId || loading.review" @click="reviewCandidate('merge')" title="Select a Long-Term memory on the right first">Merge into Selected</button>
         </div>
         <p v-if="errors.review" class="error">{{ errors.review }}</p>
         <pre v-if="selectedCandidate" class="json">{{ JSON.stringify(selectedCandidate, null, 2) }}</pre>
@@ -358,11 +341,11 @@ onMounted(async () => {
             @click="selectedMemoryId = item.memory_id; loadMemoryDetail(item.memory_id)"
           >
             <div class="line">
-              <strong>{{ item.memory_id }}</strong>
+              <strong>{{ item.candidate_type }}</strong>
               <span :class="statusClass(item.status)">{{ item.status }}</span>
             </div>
-            <p>{{ item.candidate_type }} · conf {{ item.confidence.toFixed(2) }}</p>
-            <small>{{ item.tags.join(', ') }}</small>
+            <p>{{ item.summary }}</p>
+            <small>conf: {{ item.confidence?.toFixed(2) }}</small>
           </li>
         </ul>
       </article>
@@ -387,14 +370,6 @@ onMounted(async () => {
         </template>
       </article>
     </section>
-
-    <section class="stream">
-      <h2>Action Stream</h2>
-      <p v-if="streamLog.length === 0" class="state">No actions yet.</p>
-      <ul v-else>
-        <li v-for="(line, index) in streamLog" :key="index">{{ line }}</li>
-      </ul>
-    </section>
   </div>
 </template>
 
@@ -416,8 +391,7 @@ onMounted(async () => {
 
 .toolbar,
 .extract-box,
-.panel,
-.stream {
+.panel {
   background: #fffdf7;
   border: 1px solid #d6ccbf;
   border-radius: 14px;
@@ -591,15 +565,6 @@ button:disabled {
   padding: 0.65rem;
   overflow: auto;
   max-height: 300px;
-}
-
-.stream {
-  padding: 0.9rem;
-}
-
-.stream ul {
-  margin: 0.4rem 0 0;
-  padding-left: 1rem;
 }
 
 @media (max-width: 1100px) {

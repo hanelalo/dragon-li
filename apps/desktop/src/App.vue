@@ -1,5 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import ChatPage from './pages/ChatPage.vue'
 import MemoryPage from './pages/MemoryPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
@@ -17,6 +19,8 @@ const currentPath = ref('/memory')
 const currentRoute = computed(() => routes.find((route) => route.path === currentPath.value) ?? routes[2])
 const currentView = computed(() => routeComponents[currentPath.value] ?? MemoryPage)
 
+let unlistenMemoryUpdate = null
+
 function syncRoute() {
   const path = normalizePath(pathFromHash(window.location.hash))
   currentPath.value = path
@@ -29,16 +33,42 @@ function go(path) {
   window.location.hash = target
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (!window.location.hash) {
     window.location.hash = appState.nav.lastVisitedPath
   }
   syncRoute()
   window.addEventListener('hashchange', syncRoute)
+
+  // Fetch initial unreviewed memory count
+  try {
+    const res = await invoke('memory_count_pending')
+    appState.memory.unreviewedCount = res.data.count
+  } catch (err) {
+    console.error('Failed to get initial memory count:', err)
+  }
+
+  // Listen for auto-extraction updates from backend
+  listen('memory_candidates_updated', (event) => {
+    if (event.payload && typeof event.payload.unreviewed_count === 'number') {
+      appState.memory.unreviewedCount = event.payload.unreviewed_count
+      
+      // If we are currently on the MemoryPage, we should reload the candidates
+      // Note: We dispatch a custom event that MemoryPage can listen to
+      window.dispatchEvent(new CustomEvent('memory-candidates-refreshed'))
+    }
+  }).then((unlisten) => {
+    unlistenMemoryUpdate = unlisten
+  }).catch((err) => {
+    console.error('Failed to listen memory updates:', err)
+  })
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('hashchange', syncRoute)
+  if (typeof unlistenMemoryUpdate === 'function') {
+    unlistenMemoryUpdate()
+  }
 })
 </script>
 
@@ -56,7 +86,15 @@ onBeforeUnmount(() => {
           :class="['nav-item', { active: currentPath === route.path }]"
           @click="go(route.path)"
         >
-          {{ route.label }}
+          <div class="nav-content">
+            <span>{{ route.label }}</span>
+            <span 
+              v-if="route.path === '/memory' && appState.memory.unreviewedCount > 0" 
+              class="badge"
+            >
+              {{ appState.memory.unreviewedCount > 99 ? '99+' : appState.memory.unreviewedCount }}
+            </span>
+          </div>
         </button>
       </nav>
       <p class="hint">当前页面：{{ currentRoute.label }}</p>
@@ -119,6 +157,22 @@ onBeforeUnmount(() => {
   text-align: left;
   font: inherit;
   cursor: pointer;
+}
+
+.nav-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.badge {
+  background-color: #e63946;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: 12px;
+  line-height: 1;
 }
 
 .nav-item.active {

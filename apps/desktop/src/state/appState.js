@@ -15,5 +15,8 @@ export const appState = reactive({
   },
   settings: {
     profiles: []
+  },
+  memory: {
+    unreviewedCount: 0
   }
 })

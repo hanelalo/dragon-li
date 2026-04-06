@@ -62,6 +62,7 @@ pub struct ChatResult {
     pub model: String,
     pub events: Vec<ChatStreamEvent>,
     pub output_text: String,
+    pub reasoning_text: String,
     pub attempts: usize,
     pub tokens_in: u32,
     pub tokens_out: u32,
@@ -158,9 +159,9 @@ impl Transport for HttpTransport {
         info!("Executing network request: URL={} Payload={}", req.url, body);
 
         let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(30))
-            .timeout_read(Duration::from_secs(30))
-            .timeout_write(Duration::from_secs(30))
+            .timeout_connect(Duration::from_secs(60))
+            .timeout_read(Duration::from_secs(120))
+            .timeout_write(Duration::from_secs(60))
             .build();
 
         let mut request = agent.post(&req.url);
@@ -362,6 +363,15 @@ impl<T: Transport> ChatService<T> {
             .collect::<Vec<_>>()
             .join("");
 
+        let reasoning_text = events
+            .iter()
+            .filter_map(|e| match e {
+                ChatStreamEvent::Reasoning { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+
         let mut tokens_in = 0;
         let mut tokens_out = 0;
         for e in &events {
@@ -377,9 +387,74 @@ impl<T: Transport> ChatService<T> {
             model: model.to_string(),
             events,
             output_text,
+            reasoning_text,
             attempts: 1,
             tokens_in,
             tokens_out,
+        })
+    }
+
+    pub fn chat_with_retry_json<R: serde::de::DeserializeOwned>(
+        &self,
+        req: &ChatRequestInput,
+        cfg: &ApiProfilesConfig,
+    ) -> Result<R, ChatError> {
+        validate_request(req)?;
+        let profile = find_enabled_profile(cfg, &req.profile_id)?;
+        let model = req
+            .model
+            .clone()
+            .unwrap_or_else(|| profile.default_model.clone());
+
+        let mut attempt = 0usize;
+        loop {
+            info!("Attempt {} to send JSON request to {:?}", attempt + 1, profile.provider);
+            let call_result = self.chat_once_json(req, profile, &model);
+            match call_result {
+                Ok(result) => return Ok(result),
+                Err(err) => {
+                    attempt += 1;
+                    if !is_retryable(&err) || attempt > MAX_RETRIES {
+                        return Err(err);
+                    }
+                    let backoff = RETRY_BACKOFF_MS
+                        .get(attempt - 1)
+                        .copied()
+                        .unwrap_or_else(|| *RETRY_BACKOFF_MS.last().unwrap_or(&1500));
+                    thread::sleep(Duration::from_millis(backoff));
+                }
+            }
+        }
+    }
+
+    fn chat_once_json<R: serde::de::DeserializeOwned>(
+        &self,
+        req: &ChatRequestInput,
+        profile: &ApiProfile,
+        model: &str,
+    ) -> Result<R, ChatError> {
+        let adapter = adapter_for_provider(&profile.provider);
+        let http_req = adapter.build_json_request(req, profile, model);
+
+        let resp = self
+            .transport
+            .post_json(&http_req)
+            .map_err(map_transport_error)?;
+
+        if !(200..300).contains(&resp.status) {
+            return Err(map_http_error(resp.status, &resp.body_text));
+        }
+
+        let json_value = adapter.parse_json_response(&resp.body_text)?;
+        
+        // Print the parsed JSON object to help with debugging
+        info!("Parsed JSON from provider: {}", serde_json::to_string(&json_value).unwrap_or_default());
+        
+        serde_json::from_value(json_value).map_err(|e| ChatError::Provider {
+            code: "PROVIDER_BAD_REQUEST".to_string(),
+            message: format!("failed to deserialize typed JSON: {e}"),
+            retryable: false,
+            http_status: None,
         })
     }
 }
@@ -456,6 +531,22 @@ trait ProviderAdapter {
     fn name(&self) -> &'static str;
     fn build_request(&self, req: &ChatRequestInput, profile: &ApiProfile, model: &str) -> HttpRequest;
     fn parse_stream_line(&self, line: &str) -> Result<Vec<ChatStreamEvent>, ChatError>;
+    
+    fn build_json_request(&self, req: &ChatRequestInput, profile: &ApiProfile, model: &str) -> HttpRequest;
+    fn parse_json_response(&self, response_body: &str) -> Result<serde_json::Value, ChatError>;
+}
+
+fn strip_markdown_json(text: &str) -> &str {
+    let mut t = text.trim();
+    if t.starts_with("```json") {
+        t = t["```json".len()..].trim();
+    } else if t.starts_with("```") {
+        t = t["```".len()..].trim();
+    }
+    if t.ends_with("```") {
+        t = t[..t.len() - 3].trim();
+    }
+    t
 }
 
 struct OpenAiAdapter;
@@ -567,6 +658,41 @@ impl ProviderAdapter for OpenAiAdapter {
             }
         }
         Ok(events)
+    }
+
+    fn build_json_request(&self, req: &ChatRequestInput, profile: &ApiProfile, model: &str) -> HttpRequest {
+        let mut http_req = self.build_request(req, profile, model);
+        if let Some(obj) = http_req.body.as_object_mut() {
+            obj.insert("stream".to_string(), json!(false));
+            obj.remove("stream_options");
+            obj.insert("response_format".to_string(), json!({"type": "json_object"}));
+        }
+        http_req
+    }
+
+    fn parse_json_response(&self, response_body: &str) -> Result<serde_json::Value, ChatError> {
+        let value: Value = serde_json::from_str(response_body).map_err(|e| ChatError::Provider {
+            code: "PROVIDER_BAD_REQUEST".to_string(),
+            message: format!("invalid OpenAI json payload: {e}"),
+            retryable: false,
+            http_status: None,
+        })?;
+
+        let content = value
+            .get("choices")
+            .and_then(|v| v.get(0))
+            .and_then(|v| v.get("message"))
+            .and_then(|v| v.get("content"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        let clean_json = strip_markdown_json(content);
+        serde_json::from_str(clean_json).map_err(|e| ChatError::Provider {
+            code: "PROVIDER_BAD_REQUEST".to_string(),
+            message: format!("failed to parse structured JSON: {e}"),
+            retryable: false,
+            http_status: None,
+        })
     }
 }
 
@@ -709,6 +835,53 @@ impl ProviderAdapter for AnthropicAdapter {
         }
         Ok(events)
     }
+
+    fn build_json_request(&self, req: &ChatRequestInput, profile: &ApiProfile, model: &str) -> HttpRequest {
+        let mut http_req = self.build_request(req, profile, model);
+        if let Some(obj) = http_req.body.as_object_mut() {
+            obj.insert("stream".to_string(), json!(false));
+            if let Some(messages) = obj.get_mut("messages").and_then(|m| m.as_array_mut()) {
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": "{"
+                }));
+            }
+        }
+        http_req
+    }
+
+    fn parse_json_response(&self, response_body: &str) -> Result<serde_json::Value, ChatError> {
+        let value: Value = serde_json::from_str(response_body).map_err(|e| ChatError::Provider {
+            code: "PROVIDER_BAD_REQUEST".to_string(),
+            message: format!("invalid Anthropic json payload: {e}"),
+            retryable: false,
+            http_status: None,
+        })?;
+
+        let content = value
+            .get("content")
+            .and_then(|v| v.get(0))
+            .and_then(|v| v.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        let full_content = format!("{{{content}");
+        let clean_json = strip_markdown_json(&full_content);
+
+        // Sometimes Anthropic may return the opening brace itself, resulting in `{{...`
+        let clean_json = if clean_json.starts_with("{{") {
+            clean_json[1..].to_string()
+        } else {
+            clean_json.to_string()
+        };
+
+        serde_json::from_str(&clean_json).map_err(|e| ChatError::Provider {
+            code: "PROVIDER_BAD_REQUEST".to_string(),
+            message: format!("failed to parse structured JSON: {e}"),
+            retryable: false,
+            http_status: None,
+        })
+    }
 }
 
 fn parse_sse_payload(line: &str) -> Option<&str> {
@@ -723,7 +896,7 @@ fn map_transport_error(err: TransportError) -> ChatError {
     match err {
         TransportError::Timeout => ChatError::Provider {
             code: "PROVIDER_TIMEOUT".to_string(),
-            message: "request timed out after 30s".to_string(),
+            message: "request timed out".to_string(),
             retryable: true,
             http_status: None,
         },
@@ -965,5 +1138,40 @@ data: {"type":"message_stop"}"#;
         let (code, _, retryable) = error_to_parts(err);
         assert_eq!(code, "CONFIG_PROFILE_NOT_FOUND");
         assert!(!retryable);
+    }
+
+    #[derive(serde::Deserialize, Debug, PartialEq)]
+    struct DummyJson {
+        message: String,
+        status: String,
+    }
+
+    #[test]
+    fn openai_json_parsed() {
+        let cfg = cfg_with_profile(Provider::Openai);
+        let body = r#"{"choices":[{"message":{"content":"```json\n{\"message\":\"hello\",\"status\":\"ok\"}\n```"}}]}"#;
+        let transport = MockTransport::new(vec![Ok(HttpResponse {
+            status: 200,
+            body_text: body.to_string(),
+        })]);
+        let svc = ChatService::new(transport);
+        let out: DummyJson = svc.chat_with_retry_json(&req("openai-main"), &cfg).expect("chat json ok");
+        assert_eq!(out.message, "hello");
+        assert_eq!(out.status, "ok");
+    }
+
+    #[test]
+    fn anthropic_json_parsed() {
+        let cfg = cfg_with_profile(Provider::Anthropic);
+        // Note: Anthropic's output will be missing the leading `{` because of prefill.
+        let body = r#"{"content":[{"text":"\n  \"message\": \"hello\",\n  \"status\": \"ok\"\n}"}]}"#;
+        let transport = MockTransport::new(vec![Ok(HttpResponse {
+            status: 200,
+            body_text: body.to_string(),
+        })]);
+        let svc = ChatService::new(transport);
+        let out: DummyJson = svc.chat_with_retry_json(&req("anthropic-main"), &cfg).expect("chat json ok");
+        assert_eq!(out.message, "hello");
+        assert_eq!(out.status, "ok");
     }
 }
