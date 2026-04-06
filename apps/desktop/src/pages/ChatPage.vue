@@ -56,9 +56,7 @@ async function loadSessions() {
   try {
     const res = await invoke('session_list')
     sessionList.value = res?.sessions || res?.data?.sessions || []
-    if (!activeSessionId.value && sessionList.value.length > 0) {
-      activeSessionId.value = sessionList.value[0].id
-    }
+    // 移除自动选中第一个会话的逻辑
   } catch (err) {
     console.error('Failed to load sessions', err)
   }
@@ -182,7 +180,28 @@ async function handleDeleteSession(id) {
 }
 
 async function handleSendMessage(text, retryMessage = null) {
-  if (!activeSessionId.value) return
+  if (!activeSessionId.value) {
+    // If no active session, create a new one first
+    const id = `s_${Date.now()}`
+    const now = new Date().toISOString()
+    const newSession = {
+      id,
+      title: 'New Chat',
+      status: 'active',
+      default_provider: null,
+      default_model: null,
+      created_at: now,
+      updated_at: now
+    }
+    try {
+      await invoke('session_create', { session: newSession })
+      await loadSessions()
+      activeSessionId.value = id
+    } catch (err) {
+      console.error('Create session failed', err)
+      return
+    }
+  }
   
   if (!messagesBySession.value[activeSessionId.value]) {
     messagesBySession.value[activeSessionId.value] = []
@@ -233,6 +252,7 @@ async function handleSendMessage(text, retryMessage = null) {
     await invoke('message_create', { message: userMsg }).catch(console.error)
 
     // Trigger title generation if this is the first message in the session
+    // Refresh the session list so the newly created session has the updated title in the UI
     const currentSession = sessionList.value.find(s => s.id === activeSessionId.value)
     // Calculate the number of user messages in this session
     // `historyMessages` contains the history before this new message is added.
@@ -250,6 +270,7 @@ async function handleSendMessage(text, retryMessage = null) {
           const title = res.data.title;
           await invoke('session_update_title', { sessionId: activeSessionId.value, title })
           currentSession.title = title
+          await loadSessions()
         }
       }).catch(err => {
         console.error("Title generation failed:", err)
@@ -361,7 +382,7 @@ function updateDraft(val) {
     <main class="chat-main">
       <header class="main-header">
         <div class="header-left">
-          <h2>{{ sessionList.find(s => s.id === activeSessionId)?.title || 'Chat' }}</h2>
+          <h2>{{ sessionList.find(s => s.id === activeSessionId)?.title || (activeSessionId ? 'Chat' : 'Start a New Chat') }}</h2>
         </div>
         <div class="header-right">
           <label>模型:</label>

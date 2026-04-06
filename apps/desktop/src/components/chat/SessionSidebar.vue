@@ -1,5 +1,6 @@
 <script setup>
-import { defineProps, ref, nextTick } from 'vue'
+import { defineProps, ref, onMounted, onUnmounted } from 'vue'
+import { appState } from '../../state/appState'
 
 const props = defineProps({
   sessions: {
@@ -16,6 +17,7 @@ const emit = defineEmits(['select', 'create', 'rename', 'delete'])
 
 const editingId = ref(null)
 const editTitle = ref('')
+const showSettingsMenu = ref(false)
 
 function startRename(session) {
   editingId.value = session.id
@@ -38,6 +40,30 @@ function handleKeydown(e, session) {
   } else if (e.key === 'Escape') {
     editingId.value = null
   }
+}
+
+function toggleSettingsMenu(event) {
+  event.stopPropagation()
+  showSettingsMenu.value = !showSettingsMenu.value
+}
+
+function closeSettingsMenu(event) {
+  if (showSettingsMenu.value) {
+    showSettingsMenu.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', closeSettingsMenu)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', closeSettingsMenu)
+})
+
+function goTo(path) {
+  window.location.hash = path
+  showSettingsMenu.value = false
 }
 </script>
 
@@ -90,6 +116,40 @@ function handleKeydown(e, session) {
         No sessions
       </li>
     </ul>
+    
+    <footer class="sidebar-footer">
+      <div class="settings-wrapper" @click.stop>
+        <button class="footer-btn settings-btn" @click="toggleSettingsMenu" title="设置">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span v-if="appState.memory.unreviewedCount > 0" class="badge menu-badge"></span>
+        </button>
+
+        <div v-if="showSettingsMenu" class="settings-menu">
+          <button class="menu-item" @click="goTo('/settings')">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+            <span>模型配置</span>
+          </button>
+          <button class="menu-item" @click="goTo('/memory')">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+              <line x1="12" y1="22.08" x2="12" y2="12"></line>
+            </svg>
+            <span>记忆中心</span>
+            <span v-if="appState.memory.unreviewedCount > 0" class="badge">
+              {{ appState.memory.unreviewedCount > 99 ? '99+' : appState.memory.unreviewedCount }}
+            </span>
+          </button>
+        </div>
+      </div>
+    </footer>
   </aside>
 </template>
 
@@ -217,5 +277,96 @@ header h3 {
 }
 .empty:hover {
   background: transparent !important;
+}
+
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0.8rem 1rem;
+  border-top: 1px solid #f0ece5;
+  background: #fdfaf5;
+}
+
+.settings-wrapper {
+  position: relative;
+}
+
+.footer-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #7a7067;
+  font-size: 0.9rem;
+  padding: 0.5rem;
+  border-radius: 6px;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.footer-btn:hover {
+  background: #f0ece5;
+  color: #3b3531;
+}
+
+.settings-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  background: #fff;
+  border: 1px solid #e8e0d5;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  padding: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 140px;
+  z-index: 10;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #3b3531;
+  font-size: 0.9rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  transition: all 0.2s;
+  text-align: left;
+  position: relative;
+}
+
+.menu-item:hover {
+  background: #f4efeb;
+}
+
+.menu-badge {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+  transform: translate(10%, -10%);
+}
+
+.badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background-color: #e63946;
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.1rem 0.35rem;
+  border-radius: 12px;
+  line-height: 1;
+  transform: translate(25%, -25%);
 }
 </style>

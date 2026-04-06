@@ -49,8 +49,11 @@ const emit = defineEmits(['retry'])
     </div>
     
     <div v-for="msg in messages" :key="msg.id" :class="['message', msg.role]">
-      <div class="avatar">
-        {{ msg.role === 'user' ? 'U' : 'AI' }}
+      <div class="avatar" v-if="msg.role === 'user'">
+        U
+      </div>
+      <div class="avatar ai-avatar" v-else>
+        <img src="../../assets/logo.png" alt="AI" />
       </div>
       <div class="content-box">
         <div class="header">
@@ -125,7 +128,7 @@ const emit = defineEmits(['retry'])
 .message {
   display: flex;
   gap: 1rem;
-  max-width: 800px;
+  max-width: 1200px;
   margin: 0 auto;
   width: 100%;
 }
@@ -144,6 +147,13 @@ const emit = defineEmits(['retry'])
   font-weight: bold;
   font-size: 0.9rem;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.ai-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .message.user .avatar {
@@ -152,7 +162,7 @@ const emit = defineEmits(['retry'])
 }
 
 .message.assistant .avatar {
-  background: #e6e0d8;
+  background: transparent;
   color: #4a413a;
 }
 

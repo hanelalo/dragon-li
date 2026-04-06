@@ -241,13 +241,27 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('memory-candidates-refreshed', handleMemoryCandidatesRefreshed)
 })
+
+function goBack() {
+  window.location.hash = '/chat'
+}
 </script>
 
 <template>
   <div class="memory-page">
     <header class="hero">
-      <h1>Memory Center</h1>
-      <p>Review candidates and manage long-term memory with filters and detail view.</p>
+      <div class="header-left">
+        <button class="back-btn" @click="goBack" title="返回聊天">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+        </button>
+        <div>
+          <h1>Memory Center</h1>
+          <p>Review candidates and manage long-term memory with filters and detail view.</p>
+        </div>
+      </div>
     </header>
 
     <section class="toolbar">
@@ -377,6 +391,37 @@ onUnmounted(() => {
 .memory-page {
   display: grid;
   gap: 0.9rem;
+  padding: 1.5rem;
+  box-sizing: border-box;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.back-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #6f6460;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  border-radius: 8px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.back-btn:hover {
+  background: #eae3d9;
+  color: #2b2623;
 }
 
 .hero h1 {

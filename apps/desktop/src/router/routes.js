@@ -7,12 +7,12 @@ export const routes = [
 const routePaths = new Set(routes.map((route) => route.path))
 
 export function normalizePath(path) {
-  if (!path) return '/memory'
+  if (!path) return '/chat'
   const normalized = path.startsWith('/') ? path : `/${path}`
-  return routePaths.has(normalized) ? normalized : '/memory'
+  return routePaths.has(normalized) ? normalized : '/chat'
 }
 
 export function pathFromHash(hashValue) {
-  if (!hashValue) return '/memory'
+  if (!hashValue) return '/chat'
   return normalizePath(hashValue.replace(/^#/, ''))
 }

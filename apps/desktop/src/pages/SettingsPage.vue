@@ -219,13 +219,27 @@ async function handleTestProfile(profileToTest) {
     if (unlistenStream) unlistenStream()
   }
 }
+
+function goBack() {
+  window.location.hash = '/chat'
+}
 </script>
 
 <template>
   <section class="settings-page">
-    <header>
-      <h1>模型配置</h1>
-      <p>管理大模型服务商与 API Key</p>
+    <header class="page-header">
+      <div class="header-left">
+        <button class="back-btn" @click="goBack" title="返回聊天">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+        </button>
+        <div>
+          <h1>模型配置</h1>
+          <p>管理大模型服务商与 API Key</p>
+        </div>
+      </div>
     </header>
 
     <div v-if="hasExternalChange" class="external-change-alert">
@@ -277,9 +291,40 @@ async function handleTestProfile(profileToTest) {
   flex-direction: column;
   gap: 1.5rem;
   height: 100%;
+  padding: 1.5rem;
+  box-sizing: border-box;
 }
 
-header h1 { margin: 0; }
+.page-header {
+  display: flex;
+  align-items: center;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.back-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #6f6460;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  border-radius: 8px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.back-btn:hover {
+  background: #eae3d9;
+  color: #2b2623;
+}
+
+header h1 { margin: 0; font-size: 1.8rem; }
 header p { margin: 0.35rem 0 0; color: #5f5953; }
 
 .external-change-alert {

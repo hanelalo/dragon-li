@@ -2,10 +2,10 @@ import { reactive } from 'vue'
 
 export const appState = reactive({
   nav: {
-    lastVisitedPath: '/memory'
+    lastVisitedPath: '/chat'
   },
   runtime: {
-    activeSessionId: 's1',
+    activeSessionId: '',
     activeProfileId: '',
     lastRequestId: '',
     lastError: ''
