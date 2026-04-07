@@ -32,25 +32,30 @@ async def lifespan(app: FastAPI):
             # Find all enabled MCP connectors
             # Handle case where table might not exist yet
             try:
-                cursor.execute("SELECT name, endpoint FROM mcp_connectors WHERE enabled = 1 AND deleted_at IS NULL")
+                cursor.execute("SELECT name, mcp_type, endpoint FROM mcp_connectors WHERE enabled = 1 AND deleted_at IS NULL")
                 connectors = cursor.fetchall()
                 for row in connectors:
                     name = row["name"]
+                    mcp_type = row["mcp_type"]
                     endpoint = row["endpoint"]
-                    logger.info(f"Connecting to MCP server: {name} at {endpoint}")
-                    # Parse endpoint command into args
-                    args = shlex.split(endpoint)
-                    if not args:
-                        continue
-                    command = args[0]
-                    command_args = args[1:]
-                    await mcp_manager.connect(
-                        name,
-                        StdioServerParameters(
-                            command=command,
-                            args=command_args
+                    logger.info(f"Connecting to MCP server: {name} (type: {mcp_type}) at {endpoint}")
+                    
+                    if mcp_type == 'stdio':
+                        # Parse endpoint command into args
+                        args = shlex.split(endpoint)
+                        if not args:
+                            continue
+                        command = args[0]
+                        command_args = args[1:]
+                        await mcp_manager.connect(
+                            name,
+                            StdioServerParameters(
+                                command=command,
+                                args=command_args
+                            )
                         )
-                    )
+                    else:
+                        logger.warning(f"MCP type '{mcp_type}' is not yet supported by runtime agent.")
             except sqlite3.OperationalError as e:
                 logger.warning(f"Failed to read mcp_connectors table: {e}")
             finally:

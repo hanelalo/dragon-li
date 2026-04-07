@@ -31,7 +31,7 @@ const emit = defineEmits(['select', 'add'])
       >
         <div class="info">
           <span class="name">{{ mcp.name }}</span>
-          <span class="provider">{{ mcp.endpoint }}</span>
+          <span class="provider">[{{ mcp.mcp_type || 'stdio' }}] {{ mcp.endpoint }}</span>
         </div>
         <div class="status">
           <span v-if="mcp.enabled" class="badge enabled">启用</span>

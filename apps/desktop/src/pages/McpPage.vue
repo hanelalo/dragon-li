@@ -41,6 +41,7 @@ function handleAddMcp() {
   const newMcp = {
     id: newId,
     name: 'New MCP Server',
+    mcp_type: 'stdio',
     endpoint: '',
     status: 'configured',
     enabled: false,
@@ -72,6 +73,7 @@ async function handleSaveMcp(updatedMcp) {
     const res = await invoke('mcp_connector_update', {
       id: updatedMcp.id,
       name: updatedMcp.name,
+      mcpType: updatedMcp.mcp_type,
       endpoint: updatedMcp.endpoint,
       status: updatedMcp.status,
       allowedDomainsJson: updatedMcp.allowed_domains_json,

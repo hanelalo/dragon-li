@@ -67,13 +67,12 @@ function handleTest() {
 
       <div class="form-group row">
         <div class="col">
-          <label>Endpoint / Command</label>
-          <input 
-            v-model="localMcp.endpoint" 
-            type="text" 
-            required 
-            placeholder="例如: uvx mcp-server-sqlite" 
-          />
+          <label>连接类型</label>
+          <select v-model="localMcp.mcp_type" class="mcp-type-select">
+            <option value="stdio">stdio (本地命令)</option>
+            <option value="sse">sse (Server-Sent Events)</option>
+            <option value="streamable_http">streamable http</option>
+          </select>
         </div>
         <div class="col">
           <label>状态</label>
@@ -82,6 +81,19 @@ function handleTest() {
             <label for="enabled-toggle">{{ localMcp.enabled ? '已启用' : '已禁用' }}</label>
           </div>
         </div>
+      </div>
+
+      <div class="form-group">
+        <label v-if="localMcp.mcp_type === 'stdio'">Command / Args</label>
+        <label v-else-if="localMcp.mcp_type === 'sse'">SSE URL</label>
+        <label v-else>HTTP URL</label>
+        
+        <input 
+          v-model="localMcp.endpoint" 
+          type="text" 
+          required 
+          :placeholder="localMcp.mcp_type === 'stdio' ? '例如: uvx mcp-server-sqlite' : '例如: http://localhost:8000/sse'" 
+        />
       </div>
 
       <div class="form-actions">
@@ -213,7 +225,8 @@ select {
 }
 
 input[type="text"],
-input[type="url"] {
+input[type="url"],
+select {
   padding: 0.6rem;
 }
 

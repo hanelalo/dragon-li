@@ -39,6 +39,7 @@ pub fn mcp_connector_update(
     state: tauri::State<'_, AppState>,
     id: String,
     name: String,
+    mcp_type: String,
     endpoint: String,
     status: String,
     allowed_domains_json: Option<String>,
@@ -50,6 +51,7 @@ pub fn mcp_connector_update(
     match state.sqlite_store.update_mcp_connector(
         &id,
         &name,
+        &mcp_type,
         &endpoint,
         &status,
         allowed_domains_json.as_deref(),

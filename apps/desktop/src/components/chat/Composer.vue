@@ -62,7 +62,6 @@ function send() {
         v-model="input"
         @input="handleInput"
         @keydown="handleKeydown"
-        :disabled="disabled"
         placeholder="Message..."
         rows="1"
         class="composer-input"
@@ -132,6 +131,12 @@ function send() {
 
 .composer-input::placeholder {
   color: #a49a8f;
+}
+
+.composer-input:disabled {
+  background: transparent;
+  color: #2b2623;
+  cursor: text;
 }
 
 .send-btn {
