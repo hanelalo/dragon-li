@@ -8,6 +8,19 @@
   "permissions": [
     "core:default",
     "core:event:default",
-    "dialog:default"
+    "dialog:default",
+    "shell:default",
+    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "runtime_agent",
+          "cmd": "runtime_agent",
+          "args": true,
+          "sidecar": true
+        }
+      ]
+    }
   ]
 }

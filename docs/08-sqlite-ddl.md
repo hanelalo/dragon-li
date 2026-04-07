@@ -54,18 +54,78 @@ CREATE TABLE IF NOT EXISTS memory_candidates (
   deleted_at TEXT
 );
 
+-- Request Logs Table
 CREATE TABLE IF NOT EXISTS request_logs (
-  id TEXT PRIMARY KEY,
-  request_id TEXT NOT NULL,
-  session_id TEXT,
-  provider TEXT,
-  model TEXT,
-  status TEXT NOT NULL,
-  latency_ms INTEGER,
-  tokens_in INTEGER,
-  tokens_out INTEGER,
-  error_code TEXT,
-  created_at TEXT NOT NULL
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    request_payload TEXT NOT NULL,
+    response_payload TEXT NOT NULL,
+    status TEXT NOT NULL, -- 'success', 'error'
+    error_message TEXT,
+    duration_ms INTEGER NOT NULL,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    total_tokens INTEGER,
+    created_at TEXT NOT NULL, -- ISO 8601 string
+    updated_at TEXT NOT NULL, -- ISO 8601 string
+    deleted_at TEXT -- ISO 8601 string, null if not deleted
+);
+
+-- Capability Table
+CREATE TABLE IF NOT EXISTS capabilities (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL, -- 'native', 'skill', 'mcp'
+    name TEXT NOT NULL,
+    description TEXT,
+    input_schema_json TEXT,
+    risk_level TEXT NOT NULL, -- 'low', 'medium', 'high'
+    enabled BOOLEAN NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
+);
+
+-- Capability Permissions Table
+CREATE TABLE IF NOT EXISTS capability_permissions (
+    id TEXT PRIMARY KEY,
+    capability_id TEXT NOT NULL,
+    permission_type TEXT NOT NULL, -- 'file_read', 'file_write', 'network', 'command'
+    resource_pattern TEXT NOT NULL,
+    granted BOOLEAN NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
+);
+
+-- Capability Invocations Table
+CREATE TABLE IF NOT EXISTS capability_invocations (
+    id TEXT PRIMARY KEY,
+    capability_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    input_payload TEXT,
+    output_payload TEXT,
+    status TEXT NOT NULL, -- 'success', 'error', 'pending'
+    error_message TEXT,
+    duration_ms INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- MCP Connectors Table
+CREATE TABLE IF NOT EXISTS mcp_connectors (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    endpoint TEXT NOT NULL, -- Can be command (e.g., 'uvx mcp-server-sqlite') or URL
+    status TEXT NOT NULL, -- 'configured', 'healthy', 'error', 'disabled'
+    allowed_domains_json TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS memory_index_docs (

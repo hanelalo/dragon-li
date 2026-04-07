@@ -84,15 +84,14 @@ function handleTest() {
         </div>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" v-if="localProfile.provider !== 'anthropic'">
         <label>Base URL</label>
         <input 
           v-model="localProfile.base_url" 
           type="url" 
-          required 
-          placeholder="https://api.openai.com/v1" 
-          pattern="^https://.*"
-          title="Base URL 必须以 https:// 开头"
+          placeholder="例如: https://api.openai.com/v1" 
+          pattern="^(https?|http)://.*"
+          title="Base URL 必须以 http:// 或 https:// 开头"
         />
       </div>
 

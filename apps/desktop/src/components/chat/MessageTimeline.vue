@@ -39,6 +39,23 @@ function renderMarkdown(mdText) {
 }
 
 const emit = defineEmits(['retry'])
+
+const copiedMessageId = ref(null)
+
+async function copyText(text, msgId) {
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    copiedMessageId.value = msgId
+    setTimeout(() => {
+      if (copiedMessageId.value === msgId) {
+        copiedMessageId.value = null
+      }
+    }, 2000)
+  } catch (err) {
+    console.error('Failed to copy text', err)
+  }
+}
 </script>
 
 <template>
@@ -86,8 +103,34 @@ const emit = defineEmits(['retry'])
           </span>
           <button class="retry-btn" @click="emit('retry', msg)">Retry</button>
         </div>
-          <div v-if="msg.status === 'ok' && msg.latency_ms && msg.role === 'assistant'" class="usage-stats">
-            ⏱ {{ (msg.latency_ms / 1000).toFixed(1) }}s · 🪙 {{ msg.tokens_in }} in / {{ msg.tokens_out }} out
+          <div v-if="msg.status === 'ok' && msg.role === 'assistant'" class="message-footer">
+            <div v-if="msg.latency_ms" class="usage-stats">
+              ⏱ {{ (msg.latency_ms / 1000).toFixed(1) }}s · 🪙 {{ msg.tokens_in }} in / {{ msg.tokens_out }} out
+            </div>
+            <div class="message-actions">
+              <button class="icon-btn copy-btn" @click="copyText(msg.content_md, msg.id)" title="Copy message">
+                <svg v-if="copiedMessageId === msg.id" viewBox="0 0 24 24" width="14" height="14" stroke="#2d6a4f" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <svg v-else viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div v-else-if="msg.status === 'ok' && msg.role === 'user'" class="message-footer user-footer">
+            <div class="message-actions">
+              <button class="icon-btn copy-btn" @click="copyText(msg.content_md, msg.id)" title="Copy message">
+                <svg v-if="copiedMessageId === msg.id" viewBox="0 0 24 24" width="14" height="14" stroke="#2d6a4f" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <svg v-else viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -213,12 +256,25 @@ const emit = defineEmits(['retry'])
   word-wrap: break-word;
   overflow-x: auto; /* Enable scrolling for wide content like tables */
   max-width: 100%;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.message-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.4rem;
+  min-height: 24px;
+}
+
+.user-footer {
+  justify-content: flex-end;
 }
 
 .usage-stats {
   font-size: 0.7rem;
   color: #9fa0a1;
-  margin-top: 0.4rem;
   display: flex;
   gap: 0.5rem;
   align-items: center;
@@ -438,5 +494,36 @@ pre {
 
 .retry-btn:hover {
   background: #dc2626;
+}
+
+
+
+.message-actions {
+  opacity: 0;
+  transition: opacity 0.2s;
+  display: flex;
+  gap: 4px;
+}
+
+.content-box:hover .message-actions {
+  opacity: 1;
+}
+
+.icon-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #a49a8f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.icon-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #3b3531;
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup>
-import { defineProps, ref, watch } from 'vue'
+import { defineProps, ref, watch, nextTick } from 'vue'
 
 const props = defineProps({
   disabled: {
@@ -15,13 +15,23 @@ const props = defineProps({
 const emit = defineEmits(['send', 'update:draft'])
 
 const input = ref(props.initialText)
+const textareaRef = ref(null)
 
 watch(() => props.initialText, (val) => {
   input.value = val
+  nextTick(autoResize)
 })
+
+function autoResize() {
+  const el = textareaRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = el.scrollHeight + 'px'
+}
 
 function handleInput() {
   emit('update:draft', input.value)
+  autoResize()
 }
 
 function handleKeydown(e) {
@@ -36,6 +46,11 @@ function send() {
   emit('send', input.value.trim())
   input.value = ''
   emit('update:draft', '')
+  nextTick(() => {
+    if (textareaRef.value) {
+      textareaRef.value.style.height = 'auto'
+    }
+  })
 }
 </script>
 
@@ -43,6 +58,7 @@ function send() {
   <div class="composer">
     <div class="input-container">
       <textarea
+        ref="textareaRef"
         v-model="input"
         @input="handleInput"
         @keydown="handleKeydown"
@@ -111,6 +127,7 @@ function send() {
   max-height: 200px;
   overflow-y: auto;
   line-height: 1.4;
+  box-sizing: border-box;
 }
 
 .composer-input::placeholder {

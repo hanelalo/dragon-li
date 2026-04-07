@@ -237,9 +237,9 @@ fn validate_config(cfg: &ApiProfilesConfig) -> Result<(), ConfigError> {
         }
         let parsed_base = Url::parse(&p.base_url)
             .map_err(|e| ConfigError::SchemaInvalid(format!("invalid base_url for {}: {e}", p.id)))?;
-        if parsed_base.scheme() != "https" {
+        if parsed_base.scheme() != "https" && parsed_base.scheme() != "http" {
             return Err(ConfigError::SchemaInvalid(format!(
-                "base_url must use https for {}",
+                "base_url must use http or https for {}",
                 p.id
             )));
         }
@@ -398,8 +398,8 @@ mod tests {
 
     #[test]
     fn validates_schema() {
-        let bad = valid_config("http://api.openai.com/v1");
-        let err = validate_config(&bad).expect_err("http should be rejected");
+        let bad = valid_config("ftp://api.openai.com/v1");
+        let err = validate_config(&bad).expect_err("ftp should be rejected");
         assert!(err.to_string().contains("CONFIG_SCHEMA_INVALID"));
     }
 

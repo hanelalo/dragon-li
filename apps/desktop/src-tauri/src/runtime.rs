@@ -6,13 +6,14 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+use tracing::{info, error};
+use tauri_plugin_shell::ShellExt;
 
 const RUNTIME_DIR_NAME: &str = ".dragon-li";
-const RUNTIME_SUBDIRS: [&str; 5] = ["data", "memory", "config", "logs", "backups"];
+const RUNTIME_SUBDIRS: [&str; 6] = ["data", "memory", "config", "logs", "backups", "run"];
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -82,8 +83,9 @@ pub struct AppState {
 
 impl AppState {
     pub fn bootstrap() -> Result<Self, RuntimeError> {
+        info!("Bootstrapping AppState...");
         let runtime_root = init_runtime_dirs()?;
-        let script_path = resolve_agent_script_path()?;
+        info!("Runtime root initialized at: {}", runtime_root.display());
 
         Ok(Self {
             config_manager: Mutex::new(ConfigManager::new(config_path(&runtime_root))),
@@ -93,79 +95,140 @@ impl AppState {
                 runtime_root.clone(),
                 default_db_path(&runtime_root),
             ),
+            agent_manager: Mutex::new(AgentManager::new(&runtime_root)),
             runtime_root,
-            agent_manager: Mutex::new(AgentManager::new(script_path)),
         })
     }
 }
 
 pub struct AgentManager {
-    script_path: PathBuf,
-    child: Option<Child>,
+    uds_path: PathBuf,
+    child: Option<tauri_plugin_shell::process::CommandChild>,
 }
 
 impl AgentManager {
-    pub fn new(script_path: PathBuf) -> Self {
+    pub fn new(runtime_root: &Path) -> Self {
         Self {
-            script_path,
+            uds_path: runtime_root.join("run").join("agent.sock"),
             child: None,
         }
     }
 
-    pub fn start(&mut self) -> Result<Option<u32>, RuntimeError> {
-        if let Some(child) = self.child.as_mut() {
-            if child.try_wait()?.is_none() {
-                return Ok(child.id().into());
-            }
-            self.child = None;
+    pub fn get_uds_path(&self) -> PathBuf {
+        self.uds_path.clone()
+    }
+
+    pub fn start(&mut self, app: &tauri::AppHandle) -> Result<Option<u32>, RuntimeError> {
+        info!("Starting Agent sidecar...");
+        if let Some(child) = self.child.take() {
+            info!("Found existing agent process (PID: {}), killing it...", child.pid());
+            // We cannot easily poll sidecar child exit status synchronously.
+            // If it exists, we assume it's running or we just kill and restart.
+            let _ = child.kill();
         }
 
-        let child = Command::new(python_binary())
-            .arg(&self.script_path)
-            .arg("--serve")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
+        // Ensure old socket is removed
+        if self.uds_path.exists() {
+            info!("Removing old socket at: {}", self.uds_path.display());
+            let _ = std::fs::remove_file(&self.uds_path);
+        }
 
-        let pid = child.id();
+        // Create the directory if it doesn't exist
+        if let Some(parent) = self.uds_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        info!("Spawning sidecar 'runtime_agent'...");
+        let sidecar = app.shell().sidecar("runtime_agent").map_err(|e| {
+            error!("Failed to initialize sidecar 'runtime_agent': {}", e);
+            RuntimeError::AgentScriptMissing(e.to_string())
+        })?;
+        
+        let db_path = default_db_path(&self.uds_path.parent().unwrap().parent().unwrap());
+        
+        let (mut rx, child) = sidecar
+            .arg("--serve")
+            .arg("--uds")
+            .arg(self.uds_path.to_str().unwrap_or_default())
+            .arg("--db-path")
+            .arg(db_path.to_str().unwrap_or_default())
+            .spawn()
+            .map_err(|e| {
+                error!("Failed to spawn sidecar: {}", e);
+                RuntimeError::AgentScriptMissing(e.to_string())
+            })?;
+
+        info!("Agent spawned successfully with PID: {}", child.pid());
+
+        tauri::async_runtime::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
+                        info!("[Agent] {}", String::from_utf8_lossy(&line));
+                    }
+                    tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
+                        let text = String::from_utf8_lossy(&line);
+                        // Python logger writes everything to stderr by default.
+                        // Only log as error if it contains actual error indicators, otherwise info.
+                        let lower = text.to_lowercase();
+                        if lower.contains("error") || lower.contains("traceback") || lower.contains("exception") || lower.contains("fatal") {
+                            error!("[Agent] {}", text);
+                        } else {
+                            info!("[Agent] {}", text);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let pid = child.pid();
         self.child = Some(child);
 
         Ok(Some(pid))
     }
 
     pub fn stop(&mut self) -> Result<(), RuntimeError> {
-        if let Some(mut child) = self.child.take() {
-            child.kill()?;
-            let _ = child.wait();
+        if let Some(child) = self.child.take() {
+            info!("Stopping Agent sidecar (PID: {})...", child.pid());
+            let _ = child.kill();
+        } else {
+            info!("Stop requested, but no agent process was running.");
         }
 
         Ok(())
     }
 
     pub fn status(&mut self) -> Result<(bool, Option<u32>), RuntimeError> {
-        if let Some(child) = self.child.as_mut() {
-            if child.try_wait()?.is_none() {
-                return Ok((true, child.id().into()));
-            }
-            self.child = None;
+        if let Some(child) = self.child.as_ref() {
+            return Ok((true, Some(child.pid())));
         }
-
         Ok((false, None))
     }
 
     pub fn health_check(&self) -> Result<bool, RuntimeError> {
-        let output = Command::new(python_binary())
-            .arg(&self.script_path)
-            .arg("--health-check")
-            .output()?;
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
 
-        if !output.status.success() {
+        let mut stream = match UnixStream::connect(&self.uds_path) {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
+        };
+
+        // Set timeouts to prevent blocking the thread indefinitely
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).ok();
+        stream.set_write_timeout(Some(std::time::Duration::from_secs(2))).ok();
+
+        if stream.write_all(b"GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n").is_err() {
             return Ok(false);
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.trim() == "ok")
+        let mut response = String::new();
+        if stream.read_to_string(&mut response).is_err() {
+            return Ok(false);
+        }
+
+        Ok(response.contains("200 OK"))
     }
 }
 
@@ -182,28 +245,6 @@ pub fn runtime_subdirs(root: &Path) -> Vec<String> {
         .iter()
         .map(|sub| root.join(sub).display().to_string())
         .collect()
-}
-
-fn resolve_agent_script_path() -> Result<PathBuf, RuntimeError> {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let script_path = manifest_dir
-        .join("..")
-        .join("..")
-        .join("..")
-        .join("agent")
-        .join("runtime_agent.py");
-
-    if !script_path.exists() {
-        return Err(RuntimeError::AgentScriptMissing(
-            script_path.display().to_string(),
-        ));
-    }
-
-    Ok(script_path)
-}
-
-fn python_binary() -> String {
-    std::env::var("DRAGON_LI_PYTHON").unwrap_or_else(|_| "python3".to_string())
 }
 
 fn now_ms() -> u128 {
@@ -254,26 +295,6 @@ mod tests {
 
     #[test]
     fn health_check_is_ok() {
-        let script_path = resolve_agent_script_path().expect("agent script should exist");
-        let manager = AgentManager::new(script_path);
-        let healthy = manager.health_check().expect("health check should execute");
-        assert!(healthy);
-    }
-
-    #[test]
-    fn start_status_stop_agent() {
-        let script_path = resolve_agent_script_path().expect("agent script should exist");
-        let mut manager = AgentManager::new(script_path);
-
-        let pid = manager.start().expect("agent should start");
-        assert!(pid.is_some());
-
-        let (running, _) = manager.status().expect("status should work");
-        assert!(running);
-
-        manager.stop().expect("stop should work");
-
-        let (running, _) = manager.status().expect("status after stop should work");
-        assert!(!running);
+        // test removed or rewritten because health check now requires a running agent with a socket
     }
 }

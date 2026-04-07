@@ -1,7 +1,8 @@
 export const routes = [
-  { path: '/chat', key: 'chat', label: '聊天' },
-  { path: '/settings', key: 'settings', label: '配置' },
-  { path: '/memory', key: 'memory', label: '记忆' }
+  { path: '/chat', key: 'chat', label: 'Chat' },
+  { path: '/settings', key: 'settings', label: 'Settings' },
+  { path: '/memory', key: 'memory', label: 'Memory' },
+  { path: '/mcp', key: 'mcp', label: 'MCP' }
 ]
 
 const routePaths = new Set(routes.map((route) => route.path))

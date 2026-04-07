@@ -7,13 +7,15 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri:build:macos": "tauri build --bundles app,dmg --target aarch64-apple-darwin",
-    "tauri:build:macos:intel": "tauri build --bundles app,dmg --target x86_64-apple-darwin",
-    "tauri:build:macos:universal": "tauri build --bundles app,dmg --target universal-apple-darwin"
+    "build:agent": "cd ../../agent && source venv/bin/activate && pip install -r requirements.txt && export PYINSTALLER_CONFIG_DIR=/tmp/pyinstaller_config && pyinstaller --onefile --name runtime_agent runtime_agent.py && mkdir -p ../apps/desktop/src-tauri/binaries && cp dist/runtime_agent ../apps/desktop/src-tauri/binaries/runtime_agent-aarch64-apple-darwin",
+    "tauri:build:macos": "npm run build:agent && tauri build --bundles app,dmg --target aarch64-apple-darwin",
+    "tauri:build:macos:intel": "npm run build:agent && tauri build --bundles app,dmg --target x86_64-apple-darwin",
+    "tauri:build:macos:universal": "npm run build:agent && tauri build --bundles app,dmg --target universal-apple-darwin"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.7.0",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "dompurify": "^3.3.3",
     "marked": "^17.0.6",
     "vue": "^3.5.0"

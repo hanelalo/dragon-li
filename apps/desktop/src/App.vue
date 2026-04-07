@@ -5,13 +5,15 @@ import { listen } from '@tauri-apps/api/event'
 import ChatPage from './pages/ChatPage.vue'
 import MemoryPage from './pages/MemoryPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
+import McpPage from './pages/McpPage.vue'
 import { normalizePath, pathFromHash } from './router/routes'
 import { appState } from './state/appState'
 
 const routeComponents = {
   '/chat': ChatPage,
   '/settings': SettingsPage,
-  '/memory': MemoryPage
+  '/memory': MemoryPage,
+  '/mcp': McpPage
 }
 
 const currentPath = ref('/chat')

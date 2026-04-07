@@ -8,6 +8,15 @@ html, body {
   height: 100%;
   width: 100%;
   overflow: hidden; /* 防止出现全局滚动条 */
+  user-select: text; /* 允许文本选中 */
+  -webkit-user-select: text;
+  cursor: default;
+}
+
+/* 针对不可选中的 UI 元素重置回 user-select: none，如需要可继续扩充 */
+.session-sidebar, .main-header, button {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* 全局下拉框美化 */

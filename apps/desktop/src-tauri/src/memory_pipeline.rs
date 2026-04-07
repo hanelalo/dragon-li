@@ -421,9 +421,9 @@ impl MemoryPipeline {
                 tx.execute(
                     "UPDATE memory_candidates SET summary = ?3, evidence = ?4, tags_json = ?5, status = 'conflicted', updated_at = ?2 WHERE id = ?1",
                     params![
-                        target_id, 
-                        now, 
-                        candidate.summary, 
+                        target_id,
+                        now,
+                        candidate.summary,
                         candidate.evidence,
                         serde_json::to_string(&candidate.tags).unwrap_or_default()
                     ],
@@ -1157,7 +1157,7 @@ mod tests {
         let approved = pipeline
             .review_candidate(ReviewCandidateInput {
                 candidate_id: extracted[0].id.clone(),
-                action: "approve".to_string(),
+                action: "approve".to_string(), merge_target_id: None,
             })
             .expect("approve ok");
         assert_eq!(approved.status, "approved");
@@ -1198,7 +1198,7 @@ mod tests {
         let rejected = pipeline
             .review_candidate(ReviewCandidateInput {
                 candidate_id: extracted[0].id.clone(),
-                action: "reject".to_string(),
+                action: "reject".to_string(), merge_target_id: None,
             })
             .expect("reject ok");
         assert_eq!(rejected.status, "rejected");
@@ -1241,7 +1241,7 @@ mod tests {
         let approved = pipeline
             .review_candidate(ReviewCandidateInput {
                 candidate_id: extracted[0].id.clone(),
-                action: "approve".to_string(),
+                action: "approve".to_string(), merge_target_id: None,
             })
             .expect("approve ok");
 
@@ -1288,7 +1288,7 @@ mod tests {
         let first = pipeline
             .review_candidate(ReviewCandidateInput {
                 candidate_id: extracted[0].id.clone(),
-                action: "approve".to_string(),
+                action: "approve".to_string(), merge_target_id: None,
             })
             .expect("approve ok");
         assert!(first.markdown.contains("version: 1"));
@@ -1296,7 +1296,7 @@ mod tests {
         let merged = pipeline
             .review_candidate(ReviewCandidateInput {
                 candidate_id: extracted[0].id.clone(),
-                action: "merge".to_string(),
+                action: "merge".to_string(), merge_target_id: None,
             })
             .expect("merge ok");
         assert_eq!(merged.status, "conflicted");
@@ -1348,14 +1348,14 @@ mod tests {
         let count = pipeline.save_extracted_candidates(&session_id, &msg_id, result.clone()).expect("save ok");
         assert_eq!(count, 2);
         
-        let list = pipeline.list_candidates(&session_id, Some("pending")).expect("list ok");
+        let list = pipeline.list_candidates(Some(&session_id), Some("pending")).expect("list ok");
         assert_eq!(list.len(), 2);
         
         // 2. Test deduplication (same summary in same session should be skipped)
         let dup_count = pipeline.save_extracted_candidates(&session_id, &msg_id, result).expect("save dup ok");
         assert_eq!(dup_count, 0); // No new rows inserted
         
-        let list_after_dup = pipeline.list_candidates(&session_id, Some("pending")).expect("list ok");
+        let list_after_dup = pipeline.list_candidates(Some(&session_id), Some("pending")).expect("list ok");
         assert_eq!(list_after_dup.len(), 2); // Still 2
 
         std::fs::remove_file(db_path).ok();

@@ -55,18 +55,68 @@ CREATE TABLE IF NOT EXISTS memory_candidates (
 );
 
 CREATE TABLE IF NOT EXISTS request_logs (
-  id TEXT PRIMARY KEY,
-  request_id TEXT NOT NULL,
-  session_id TEXT,
-  provider TEXT,
-  model TEXT,
-  status TEXT NOT NULL,
-  latency_ms INTEGER,
-  tokens_in INTEGER,
-  tokens_out INTEGER,
-  error_code TEXT,
-  created_at TEXT NOT NULL
-);
+        id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        session_id TEXT,
+        provider TEXT,
+        model TEXT,
+        status TEXT NOT NULL,
+        latency_ms INTEGER,
+        tokens_in INTEGER,
+        tokens_out INTEGER,
+        error_code TEXT,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS capabilities (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        input_schema_json TEXT,
+        risk_level TEXT NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS capability_permissions (
+        id TEXT PRIMARY KEY,
+        capability_id TEXT NOT NULL,
+        permission_type TEXT NOT NULL,
+        resource_pattern TEXT NOT NULL,
+        granted BOOLEAN NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS capability_invocations (
+        id TEXT PRIMARY KEY,
+        capability_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        input_payload TEXT,
+        output_payload TEXT,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        duration_ms INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS mcp_connectors (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        endpoint TEXT NOT NULL,
+        status TEXT NOT NULL,
+        allowed_domains_json TEXT,
+        enabled BOOLEAN NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+    );
 
 CREATE TABLE IF NOT EXISTS memory_index_docs (
   memory_id TEXT PRIMARY KEY,
@@ -240,6 +290,31 @@ pub struct DeleteRestoreResult {
     pub sessions_affected: usize,
     pub messages_affected: usize,
     pub memory_candidates_affected: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConnectorRecord {
+    pub id: String,
+    pub name: String,
+    pub endpoint: String,
+    pub status: String,
+    pub allowed_domains_json: Option<String>,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub deleted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewMcpConnector {
+    pub id: String,
+    pub name: String,
+    pub endpoint: String,
+    pub status: String,
+    pub allowed_domains_json: Option<String>,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Clone)]
@@ -639,6 +714,103 @@ impl SqliteStore {
         conn.pragma_update(None, "foreign_keys", "OFF")?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         Ok(conn)
+    }
+
+    pub fn create_mcp_connector(&self, item: &NewMcpConnector) -> Result<(), StoreError> {
+        with_busy_retry(|| {
+            let conn = self.open_conn()?;
+            conn.execute(
+                "INSERT INTO mcp_connectors (id, name, endpoint, status, allowed_domains_json, enabled, created_at, updated_at, deleted_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+                params![
+                    item.id,
+                    item.name,
+                    item.endpoint,
+                    item.status,
+                    item.allowed_domains_json,
+                    item.enabled,
+                    item.created_at,
+                    item.updated_at
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_mcp_connectors(&self) -> Result<Vec<McpConnectorRecord>, StoreError> {
+        let conn = self.open_conn().map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, endpoint, status, allowed_domains_json, enabled, created_at, updated_at, deleted_at
+                 FROM mcp_connectors
+                 WHERE deleted_at IS NULL
+                 ORDER BY updated_at DESC",
+            )
+            .map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(McpConnectorRecord {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    endpoint: r.get(2)?,
+                    status: r.get(3)?,
+                    allowed_domains_json: r.get(4)?,
+                    enabled: r.get(5)?,
+                    created_at: r.get(6)?,
+                    updated_at: r.get(7)?,
+                    deleted_at: r.get(8)?,
+                })
+            })
+            .map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(|e| StoreError::DbReadFailed(e.to_string()))?);
+        }
+        Ok(result)
+    }
+
+    pub fn update_mcp_connector(
+        &self,
+        id: &str,
+        name: &str,
+        endpoint: &str,
+        status: &str,
+        allowed_domains_json: Option<&str>,
+        enabled: bool,
+        updated_at: &str,
+    ) -> Result<(), StoreError> {
+        with_busy_retry(|| {
+            let conn = self.open_conn()?;
+            conn.execute(
+                "UPDATE mcp_connectors
+                 SET name = ?1, endpoint = ?2, status = ?3, allowed_domains_json = ?4, enabled = ?5, updated_at = ?6
+                 WHERE id = ?7 AND deleted_at IS NULL",
+                params![
+                    name,
+                    endpoint,
+                    status,
+                    allowed_domains_json,
+                    enabled,
+                    updated_at,
+                    id
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_mcp_connector(&self, id: &str, deleted_at: &str) -> Result<(), StoreError> {
+        with_busy_retry(|| {
+            let conn = self.open_conn()?;
+            conn.execute(
+                "UPDATE mcp_connectors
+                 SET deleted_at = ?1
+                 WHERE id = ?2 AND deleted_at IS NULL",
+                params![deleted_at, id],
+            )?;
+            Ok(())
+        })
     }
 }
 
