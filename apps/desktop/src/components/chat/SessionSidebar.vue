@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
               <line x1="8" y1="21" x2="16" y2="21"></line>
               <line x1="12" y1="17" x2="12" y2="21"></line>
             </svg>
-            <span>模型配置</span>
+            <span>配置</span>
           </button>
           <button class="menu-item" @click="goTo('/memory')">
             <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
@@ -171,7 +171,7 @@ onBeforeUnmount(() => {
               <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
               <line x1="12" y1="22.08" x2="12" y2="12"></line>
             </svg>
-            <span>记忆中心</span>
+            <span>记忆</span>
             <span v-if="appState.memory.unreviewedCount > 0" class="badge">
               {{ appState.memory.unreviewedCount > 99 ? '99+' : appState.memory.unreviewedCount }}
             </span>

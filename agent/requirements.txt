@@ -4,3 +4,4 @@ pydantic
 openai
 anthropic
 mcp
+httpx

@@ -1,5 +1,6 @@
 import logging
 from typing import AsyncGenerator
+import httpx
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
 
@@ -55,14 +56,29 @@ async def chat_stream_generator(req: ChatRequestInput) -> AsyncGenerator[str, No
         logger.exception("LLM Stream failed")
         yield f"data: {event_to_json(ChatStreamEventAborted(code='PROVIDER_SERVER_ERROR', message=str(e), retryable=True))}\n\n"
 
+from datetime import datetime
+
 def _build_chat_system_content(req: ChatRequestInput) -> str:
     memory_part = req.prompt.memory.strip()
     memory_section = f"# Context (Injected Memories)\n{memory_part}\n\n" if memory_part else ""
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    base_system = CHAT_SYSTEM_PROMPT_TEMPLATE.format(memory_section=memory_section)
+    base_system = CHAT_SYSTEM_PROMPT_TEMPLATE.format(memory_section=memory_section, current_time=current_time)
     system_parts = [base_system, req.prompt.system, req.prompt.runtime]
     
     return "\n\n".join(p for p in system_parts if p.strip())
+
+async def execute_web_search(query: str, api_key: str) -> str:
+    url = "https://api.search.brave.com/res/v1/web/search"
+    headers = {"X-Subscription-Token": api_key, "Accept": "application/json"}
+    async with httpx.AsyncClient() as client:
+        res = await client.get(url, headers=headers, params={"q": query, "count": 5})
+        res.raise_for_status()
+        data = res.json()
+        
+    results = data.get("web", {}).get("results", [])[:5]
+    cleaned = [{"t": r.get("title"), "u": r.get("url"), "d": r.get("description")} for r in results]
+    return json.dumps(cleaned, ensure_ascii=False)
 
 async def _openai_stream(req: ChatRequestInput, profile: ApiProfile, model: str) -> AsyncGenerator[ChatStreamEvent, None]:
     client = AsyncOpenAI(api_key=profile.api_key, base_url=profile.base_url)
@@ -91,6 +107,34 @@ async def _openai_stream(req: ChatRequestInput, profile: ApiProfile, model: str)
                 "stream_options": {"include_usage": True},
             }
             tools = mcp_manager.get_all_tools()
+            
+            # Inject get_current_time tool
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "get_current_time",
+                    "description": "Get the exact current system time.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                }
+            })
+
+            if req.enable_web_search and req.cfg and req.cfg.tools and req.cfg.tools.brave_search_api_key:
+                tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the web for real-time information.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"query": {"type": "string"}},
+                            "required": ["query"]
+                        }
+                    }
+                })
             if tools:
                 kwargs["tools"] = tools
 
@@ -144,13 +188,19 @@ async def _openai_stream(req: ChatRequestInput, profile: ApiProfile, model: str)
                 logger.info(f"[Session: {req.session_id}] Executing MCP tool: {name} | Args: {arguments_str}")
                 
                 try:
-                    args = json.loads(arguments_str)
-                    result = await mcp_manager.call_tool(name, args)
-                    if hasattr(result, "content") and isinstance(result.content, list):
-                        texts = [c.text for c in result.content if hasattr(c, "text")]
-                        result_str = "\n".join(texts)
+                    args = json.loads(arguments_str) if arguments_str else {}
+                    if name == "get_current_time":
+                        result_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    elif name == "web_search":
+                        api_key = req.cfg.tools.brave_search_api_key if (req.cfg and req.cfg.tools and req.cfg.tools.brave_search_api_key) else ""
+                        result_str = await execute_web_search(args.get("query", ""), api_key)
                     else:
-                        result_str = str(result)
+                        result = await mcp_manager.call_tool(name, args)
+                        if hasattr(result, "content") and isinstance(result.content, list):
+                            texts = [c.text for c in result.content if hasattr(c, "text")]
+                            result_str = "\n".join(texts)
+                        else:
+                            result_str = str(result)
                 except Exception as e:
                     logger.error(f"[Session: {req.session_id}] Tool {name} failed: {e}")
                     result_str = f"Error: {e}"
@@ -205,14 +255,37 @@ async def _anthropic_stream(req: ChatRequestInput, profile: ApiProfile, model: s
             
             # Anthropic tool format is slightly different
             tools = mcp_manager.get_all_tools()
+            anthropic_tools = []
             if tools:
-                anthropic_tools = []
                 for t in tools:
                     anthropic_tools.append({
                         "name": t["function"]["name"],
                         "description": t["function"]["description"],
                         "input_schema": t["function"]["parameters"]
                     })
+            
+            # Inject get_current_time tool
+            anthropic_tools.append({
+                "name": "get_current_time",
+                "description": "Get the exact current system time.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            })
+
+            if req.enable_web_search and req.cfg and req.cfg.tools and req.cfg.tools.brave_search_api_key:
+                anthropic_tools.append({
+                    "name": "web_search",
+                    "description": "Search the web for real-time information.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"]
+                    }
+                })
+            if anthropic_tools:
                 kwargs["tools"] = anthropic_tools
 
             response = await client.messages.create(**kwargs)
@@ -283,13 +356,19 @@ async def _anthropic_stream(req: ChatRequestInput, profile: ApiProfile, model: s
                 logger.info(f"[Session: {req.session_id}] Executing MCP tool: {name} | Args: {arguments_str}")
                 
                 try:
-                    args = json.loads(arguments_str)
-                    result = await mcp_manager.call_tool(name, args)
-                    if hasattr(result, "content") and isinstance(result.content, list):
-                        texts = [c.text for c in result.content if hasattr(c, "text")]
-                        result_str = "\n".join(texts)
+                    args = json.loads(arguments_str) if arguments_str else {}
+                    if name == "get_current_time":
+                        result_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    elif name == "web_search":
+                        api_key = req.cfg.tools.brave_search_api_key if (req.cfg and req.cfg.tools and req.cfg.tools.brave_search_api_key) else ""
+                        result_str = await execute_web_search(args.get("query", ""), api_key)
                     else:
-                        result_str = str(result)
+                        result = await mcp_manager.call_tool(name, args)
+                        if hasattr(result, "content") and isinstance(result.content, list):
+                            texts = [c.text for c in result.content if hasattr(c, "text")]
+                            result_str = "\n".join(texts)
+                        else:
+                            result_str = str(result)
                 except Exception as e:
                     logger.error(f"[Session: {req.session_id}] Tool {name} failed: {e}")
                     result_str = f"Error: {e}"

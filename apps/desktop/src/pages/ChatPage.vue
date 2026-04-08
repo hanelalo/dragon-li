@@ -33,13 +33,16 @@ async function loadConfig() {
   try {
     const res = await invoke('config_get')
     if (res && res.ok) {
-      const profiles = res.data?.config?.profiles || []
+      const config = res.data?.config || {}
+      const profiles = config.profiles || []
       appState.settings.profiles = profiles.map(p => ({
         id: p.id,
         name: p.name,
         enabled: p.enabled,
         default_model: p.default_model
       }))
+      
+      appState.settings.tools.braveSearchApiKey = config.tools?.brave_search_api_key || ''
       
       // Update active profile if it was deleted or disabled, or not set
       if (!profiles.find(p => p.id === appState.runtime.activeProfileId && p.enabled)) {
@@ -179,7 +182,10 @@ async function handleDeleteSession(id) {
   }
 }
 
-async function handleSendMessage(text, retryMessage = null) {
+async function handleSendMessage(payload, retryMessage = null) {
+  let text = typeof payload === 'string' ? payload : payload.text
+  let webSearch = typeof payload === 'string' ? false : (payload.webSearch || false)
+
   if (!activeSessionId.value) {
     // If no active session, create a new one first
     const id = `s_${Date.now()}`
@@ -326,6 +332,7 @@ async function handleSendMessage(text, retryMessage = null) {
         request_id: reqId,
         session_id: activeSessionId.value,
         model: null,
+        enable_web_search: webSearch,
         prompt: {
           system: '',
           runtime: '',

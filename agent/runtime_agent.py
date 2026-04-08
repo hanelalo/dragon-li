@@ -212,6 +212,7 @@ def health_check():
 
 @app.post("/v1/chat/stream")
 async def chat_stream(req: ChatRequestInput):
+    logger.info(f"Received chat stream request. enable_web_search: {req.enable_web_search}")
     return StreamingResponse(
         chat_stream_generator(req),
         media_type="text/event-stream",

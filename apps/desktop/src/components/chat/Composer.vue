@@ -1,5 +1,6 @@
 <script setup>
 import { defineProps, ref, watch, nextTick } from 'vue'
+import { appState } from '../../state/appState.js'
 
 const props = defineProps({
   disabled: {
@@ -16,6 +17,7 @@ const emit = defineEmits(['send', 'update:draft'])
 
 const input = ref(props.initialText)
 const textareaRef = ref(null)
+const isWebSearchEnabled = ref(false)
 
 watch(() => props.initialText, (val) => {
   input.value = val
@@ -34,6 +36,14 @@ function handleInput() {
   autoResize()
 }
 
+function toggleWebSearch() {
+  if (!appState.settings.tools?.braveSearchApiKey) {
+    alert('Please configure Brave Search API Key in Settings first')
+    return
+  }
+  isWebSearchEnabled.value = !isWebSearchEnabled.value
+}
+
 function handleKeydown(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -43,7 +53,7 @@ function handleKeydown(e) {
 
 function send() {
   if (props.disabled || !input.value.trim()) return
-  emit('send', input.value.trim())
+  emit('send', { text: input.value.trim(), webSearch: isWebSearchEnabled.value })
   input.value = ''
   emit('update:draft', '')
   nextTick(() => {
@@ -57,6 +67,18 @@ function send() {
 <template>
   <div class="composer">
     <div class="input-container">
+      <button 
+        class="tool-btn" 
+        :class="{ active: isWebSearchEnabled }"
+        @click="toggleWebSearch"
+        title="Toggle Web Search"
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="2" y1="12" x2="22" y2="12"></line>
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+        </svg>
+      </button>
       <textarea
         ref="textareaRef"
         v-model="input"
@@ -163,6 +185,32 @@ function send() {
   background: #e8e0d5;
   color: #a49a8f;
   cursor: not-allowed;
+}
+
+.tool-btn {
+  background: transparent;
+  color: #a49a8f;
+  border: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin-right: 0.5rem;
+  align-self: flex-end;
+  transition: color 0.2s, background 0.2s;
+}
+
+.tool-btn:hover {
+  background: #f0ece5;
+  color: #2b2623;
+}
+
+.tool-btn.active {
+  color: #2d6a4f;
+  background: #e6f2ed;
 }
 
 .hint {

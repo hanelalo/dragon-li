@@ -14,7 +14,10 @@ export const appState = reactive({
     sessions: []
   },
   settings: {
-    profiles: []
+    profiles: [],
+    tools: {
+      braveSearchApiKey: ''
+    }
   },
   memory: {
     unreviewedCount: 0

@@ -54,9 +54,17 @@ pub struct ApiProfile {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToolsConfig {
+    #[serde(default)]
+    pub brave_search_api_key: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiProfilesConfig {
     pub profiles: Vec<ApiProfile>,
+    #[serde(default)]
+    pub tools: ToolsConfig,
 }
 
 pub struct ConfigManager {
@@ -361,7 +369,7 @@ fn canonicalize_allow_missing(path: &Path) -> Result<PathBuf, GuardrailError> {
 }
 
 pub fn config_to_json(cfg: &ApiProfilesConfig) -> Value {
-    serde_json::to_value(cfg).unwrap_or_else(|_| json!({ "profiles": [] }))
+    serde_json::to_value(cfg).unwrap_or_else(|_| json!({ "profiles": [], "tools": {} }))
 }
 
 pub fn config_path(runtime_root: &Path) -> PathBuf {
@@ -393,6 +401,7 @@ mod tests {
                 created_at: "2026-04-05T00:00:00+08:00".to_string(),
                 updated_at: "2026-04-05T00:00:00+08:00".to_string(),
             }],
+            tools: ToolsConfig::default(),
         }
     }
 

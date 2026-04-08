@@ -23,8 +23,12 @@ class ApiProfile(BaseModel):
     created_at: str
     updated_at: str
 
+class ToolsConfig(BaseModel):
+    brave_search_api_key: Optional[str] = None
+
 class ApiProfilesConfig(BaseModel):
     profiles: List[ApiProfile]
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
 
 class ChatRequestInput(BaseModel):
     profile_id: str
@@ -32,6 +36,7 @@ class ChatRequestInput(BaseModel):
     session_id: Optional[str] = None
     model: Optional[str] = None
     prompt: ChatPromptLayer
+    enable_web_search: bool = False
     history: List[ChatMessageContext] = Field(default_factory=list)
     # The config is passed from Rust since Python doesn't load it directly here
     cfg: Optional[ApiProfilesConfig] = None

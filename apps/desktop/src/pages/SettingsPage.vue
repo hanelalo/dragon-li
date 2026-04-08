@@ -13,6 +13,8 @@ const activeProfile = computed(() => profiles.value.find(p => p.id === activeEdi
 const errorMsg = ref('')
 const testResult = ref(null) // { success: boolean, message: string }
 const hasExternalChange = ref(false)
+const toolsSaveSuccess = ref(false)
+const activeTab = ref('models')
 
 onMounted(async () => {
   await loadConfig()
@@ -31,6 +33,7 @@ async function loadConfig() {
     const res = await invoke('config_get')
     if (res.ok) {
       profiles.value = res.data.config.profiles || []
+      appState.settings.tools.braveSearchApiKey = res.data.config.tools?.brave_search_api_key || ''
       syncGlobalProfiles(profiles.value)
     } else {
       errorMsg.value = `加载配置失败: ${res.error?.code || res.error || '未知错误'}`
@@ -56,6 +59,7 @@ async function applyExternalChange(confirm) {
     const res = await invoke('config_apply_external_change', { confirm })
     if (res.ok) {
       profiles.value = res.data.config.profiles || []
+      appState.settings.tools.braveSearchApiKey = res.data.config.tools?.brave_search_api_key || ''
       syncGlobalProfiles(profiles.value)
       hasExternalChange.value = false
       errorMsg.value = ''
@@ -84,9 +88,16 @@ function syncGlobalProfiles(currentProfiles) {
 
 async function saveConfig(newProfiles) {
   try {
-    const res = await invoke('config_save', { config: { profiles: newProfiles } })
+    const configPayload = {
+      profiles: newProfiles,
+      tools: {
+        brave_search_api_key: appState.settings.tools.braveSearchApiKey || null
+      }
+    }
+    const res = await invoke('config_save', { config: configPayload })
     if (res.ok) {
       profiles.value = res.data.config.profiles || []
+      appState.settings.tools.braveSearchApiKey = res.data.config.tools?.brave_search_api_key || ''
       syncGlobalProfiles(profiles.value)
       errorMsg.value = ''
       return true
@@ -220,6 +231,16 @@ async function handleTestProfile(profileToTest) {
   }
 }
 
+async function handleSaveTools() {
+  const success = await saveConfig(profiles.value)
+  if (success) {
+    toolsSaveSuccess.value = true
+    setTimeout(() => {
+      toolsSaveSuccess.value = false
+    }, 2000)
+  }
+}
+
 function goBack() {
   window.location.hash = '/chat'
 }
@@ -236,8 +257,8 @@ function goBack() {
           </svg>
         </button>
         <div>
-          <h1>模型配置</h1>
-          <p>管理大模型服务商与 API Key</p>
+          <h1>配置</h1>
+          <p>管理大模型服务商与工具配置</p>
         </div>
       </div>
     </header>
@@ -256,30 +277,70 @@ function goBack() {
 
     <div class="layout">
       <div class="sidebar">
-        <ProfileList 
-          :profiles="profiles"
-          :activeProfileId="activeEditorId"
-          @select="handleSelectProfile"
-          @add="handleAddProfile"
-        />
+        <div class="settings-nav">
+          <div 
+            class="nav-item" 
+            :class="{ active: activeTab === 'models' }"
+            @click="activeTab = 'models'"
+          >
+            模型配置
+          </div>
+          <div 
+            class="nav-item" 
+            :class="{ active: activeTab === 'tools' }"
+            @click="activeTab = 'tools'"
+          >
+            工具配置
+          </div>
+        </div>
+
+        <div class="profile-list-container" v-if="activeTab === 'models'">
+          <ProfileList 
+            :profiles="profiles"
+            :activeProfileId="activeEditorId"
+            @select="handleSelectProfile"
+            @add="handleAddProfile"
+          />
+        </div>
       </div>
       
       <div class="editor-area">
-        <ProfileEditor 
-          v-if="activeProfile"
-          :profile="activeProfile"
-          @save="handleSaveProfile"
-          @delete="handleDeleteProfile"
-          @test="handleTestProfile"
-        />
-        <div v-else class="no-selection">
-          <p>请选择一个 Profile 或新建</p>
-        </div>
-        
-        <div v-if="testResult" :class="['test-result', testResult.success === true ? 'success' : testResult.success === false ? 'error' : 'loading']">
-          <h4>测试结果</h4>
-          <p>{{ testResult.message }}</p>
-        </div>
+        <template v-if="activeTab === 'models'">
+          <ProfileEditor 
+            v-if="activeProfile"
+            :profile="activeProfile"
+            @save="handleSaveProfile"
+            @delete="handleDeleteProfile"
+            @test="handleTestProfile"
+          />
+          <div v-else class="no-selection">
+            <p>请选择一个 Profile 或新建</p>
+          </div>
+          
+          <div v-if="testResult" :class="['test-result', testResult.success === true ? 'success' : testResult.success === false ? 'error' : 'loading']">
+            <h4>测试结果</h4>
+            <p>{{ testResult.message }}</p>
+          </div>
+        </template>
+
+        <template v-if="activeTab === 'tools'">
+          <div class="tools-config-card">
+            <h3>全局工具配置</h3>
+            <div class="form-group">
+              <label>Brave Search API Key</label>
+              <div class="input-with-button">
+                <input 
+                  type="password" 
+                  v-model="appState.settings.tools.braveSearchApiKey" 
+                  placeholder="用于开启网络搜索功能的 API Key" 
+                />
+                <button @click="handleSaveTools" class="save-tools-btn" :class="{ success: toolsSaveSuccess }">
+                  {{ toolsSaveSuccess ? '已保存 ✓' : '保存配置' }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
   </section>
@@ -359,6 +420,64 @@ header p { margin: 0.35rem 0 0; color: #5f5953; }
   border: 1px solid #f5c6cb;
 }
 
+.tools-config-card {
+  background: #fffdf9;
+  border: 1px solid #e5dbce;
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.tools-config-card h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+  color: #2b2623;
+}
+
+.tools-config-card .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tools-config-card label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #5f5953;
+}
+
+.tools-config-card .input-with-button {
+  display: flex;
+  gap: 1rem;
+}
+
+.tools-config-card input {
+  flex: 1;
+  padding: 0.6rem;
+  border: 1px solid #d8cdbd;
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+}
+
+.tools-config-card .save-tools-btn {
+  background: #2d6a4f;
+  color: white;
+  border: none;
+  padding: 0.6rem 1.5rem;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.tools-config-card .save-tools-btn:hover:not(.success) {
+  opacity: 0.9;
+}
+
+.tools-config-card .save-tools-btn.success {
+  background: #198754;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 280px 1fr;
@@ -368,7 +487,41 @@ header p { margin: 0.35rem 0 0; color: #5f5953; }
 }
 
 .sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow: hidden;
+}
+
+.settings-nav {
+  display: flex;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e5dbce;
+}
+
+.nav-item {
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #5f5953;
+  font-weight: 500;
+  font-size: 0.95rem;
+  transition: all 0.2s;
+}
+
+.nav-item:hover {
+  background: #f5eee4;
+}
+
+.nav-item.active {
+  background: #e5dbce;
+  color: #2b2623;
+}
+
+.profile-list-container {
   overflow-y: auto;
+  flex: 1;
 }
 
 .editor-area {

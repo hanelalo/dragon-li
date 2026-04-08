@@ -10,7 +10,6 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tracing::{info, error};
-use tauri_plugin_shell::ShellExt;
 use tauri::Manager;
 
 const RUNTIME_DIR_NAME: &str = ".dragon-li";
