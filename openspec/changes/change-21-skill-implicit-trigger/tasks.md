@@ -1,0 +1,6 @@
+- [ ] Implement `SkillManager.get_delegate_tool_schema()` to dynamically build the schema with Enum and active skill descriptions.
+- [ ] Update `llm_provider.py` to inject the `delegate_to_skill` tool when `req.active_skill_id` is None.
+- [ ] Add silent interception logic for `delegate_to_skill` in the `_openai_stream` tool execution loop.
+- [ ] Extract `skill_name` and `task_context` from the intercepted tool arguments.
+- [ ] Implement context replacement: fetch the skill's SOP and replace the current System Prompt.
+- [ ] Implement the recursive/loop-back logic to initiate a new LLM stream with `task_context` as the User Prompt.

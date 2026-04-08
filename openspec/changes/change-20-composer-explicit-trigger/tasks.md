@@ -1,0 +1,6 @@
+- [ ] Install `tiptap` core, vue-3, and mention extension dependencies.
+- [ ] Refactor `Composer.vue` to replace `<textarea>` with the Tiptap editor component.
+- [ ] Implement the `@` mention popup dropdown, fetching data from the active skills list.
+- [ ] Implement logic to extract plain text and the `data-id` of the mention node on submit.
+- [ ] Update Rust `ChatRequestInput` struct and Python Pydantic model to include `explicit_skill_id: Option<String>`.
+- [ ] Update `llm_provider.py` to check for `explicit_skill_id`. If present, fetch the skill's Markdown body from `SkillManager` and replace the System Prompt.

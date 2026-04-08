@@ -1,0 +1,8 @@
+- [ ] Implement Tauri command `skill_list` in Rust to fetch skills from the DB.
+- [ ] Implement Tauri command `skill_toggle` in Rust to update the `enabled` status.
+- [ ] Implement Tauri command `skill_rescan` in Rust (sends UDS request to Python agent to rescan).
+- [ ] Create `SkillPage.vue` layout and route.
+- [ ] Wire up the UI to fetch and display the list of skills.
+- [ ] Implement the enable/disable toggle logic in the UI.
+- [ ] Add the "Open Folder" button using `@tauri-apps/plugin-shell`.
+- [ ] Add a "Rescan Skills" button in the page header.
