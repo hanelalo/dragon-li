@@ -31,11 +31,18 @@ const emit = defineEmits(['select', 'add'])
       >
         <div class="info">
           <span class="name">{{ mcp.name }}</span>
-          <span class="provider">[{{ mcp.mcp_type || 'stdio' }}] {{ mcp.endpoint }}</span>
+          <span class="provider">{{ mcp._config?.url || mcp._config?.command || '未配置' }}</span>
         </div>
         <div class="status">
-          <span v-if="mcp.enabled" class="badge enabled">启用</span>
-          <span v-else class="badge disabled">禁用</span>
+          <template v-if="!mcp._config?.enabled">
+            <span class="badge disabled">禁用</span>
+          </template>
+          <template v-else>
+            <span v-if="mcp._status?.status === 'loading'" class="badge loading">加载中...</span>
+            <span v-else-if="mcp._status?.status === 'connected'" class="badge connected">已连接</span>
+            <span v-else-if="mcp._status?.status === 'error'" class="badge error">错误</span>
+            <span v-else class="badge enabled">启用</span>
+          </template>
         </div>
       </li>
     </ul>
@@ -134,13 +141,28 @@ h2 {
 }
 
 .badge.enabled {
-  background: #d8f3dc;
-  color: #1b4332;
+  background: #e9ecef;
+  color: #495057;
 }
 
 .badge.disabled {
   background: #e9ecef;
   color: #495057;
+}
+
+.badge.loading {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.badge.connected {
+  background: #d4edda;
+  color: #155724;
+}
+
+.badge.error {
+  background: #f8d7da;
+  color: #721c24;
 }
 
 .empty {

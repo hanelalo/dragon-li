@@ -307,6 +307,87 @@ impl ChatService {
         Ok(())
     }
 
+    pub async fn get_uds_json<R: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<R, ChatError> {
+        let mut attempt = 0usize;
+        let mut stream = loop {
+            match UnixStream::connect(&self.uds_path).await {
+                Ok(s) => break s,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt > MAX_RETRIES {
+                        return Err(ChatError::Provider {
+                            code: "AGENT_UNREACHABLE".to_string(),
+                            message: format!("failed to connect to python agent: {}", e),
+                            retryable: true,
+                            http_status: None,
+                        });
+                    }
+                    let backoff = RETRY_BACKOFF_MS
+                        .get(attempt - 1)
+                        .copied()
+                        .unwrap_or_else(|| *RETRY_BACKOFF_MS.last().unwrap_or(&1500));
+                    info!("Agent unreachable for json api ({}). Retrying in {}ms...", e, backoff);
+                    tokio::time::sleep(Duration::from_millis(backoff)).await;
+                }
+            }
+        };
+
+        let req_str = format!(
+            "GET {} HTTP/1.0\r\n\
+            Host: localhost\r\n\
+            \r\n",
+            path
+        );
+
+        stream.write_all(req_str.as_bytes()).await.map_err(|e| ChatError::Provider {
+            code: "AGENT_WRITE_FAILED".to_string(),
+            message: format!("failed to write to python agent: {}", e),
+            retryable: true,
+            http_status: None,
+        })?;
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        let mut status_code = 0;
+
+        loop {
+            line.clear();
+            let n = reader.read_line(&mut line).await.unwrap_or(0);
+            if n == 0 { break; }
+            if line.starts_with("HTTP/") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    status_code = parts[1].parse().unwrap_or(500);
+                }
+            }
+            if line == "\r\n" || line == "\n" {
+                break;
+            }
+        }
+
+        let mut body = String::new();
+        let _ = reader.read_to_string(&mut body).await;
+
+        if !(200..300).contains(&status_code) {
+            return Err(ChatError::Provider {
+                code: "AGENT_HTTP_ERROR".to_string(),
+                message: format!("Agent returned HTTP {}: {}", status_code, body),
+                retryable: true,
+                http_status: Some(status_code),
+            });
+        }
+
+        serde_json::from_str(&body).map_err(|e| ChatError::Provider {
+            code: "PROVIDER_BAD_REQUEST".to_string(),
+            message: format!("failed to parse agent response: {}", e),
+            retryable: false,
+            http_status: None,
+        })
+    }
+
     pub async fn post_uds_json<T: serde::Serialize, R: serde::de::DeserializeOwned>(
         &self,
         path: &str,

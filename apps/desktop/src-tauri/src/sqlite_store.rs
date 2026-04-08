@@ -109,11 +109,9 @@ CREATE TABLE IF NOT EXISTS request_logs (
     CREATE TABLE IF NOT EXISTS mcp_connectors (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        mcp_type TEXT NOT NULL DEFAULT 'stdio',
-        endpoint TEXT NOT NULL,
+        mcp_type TEXT NOT NULL,
         status TEXT NOT NULL,
-        allowed_domains_json TEXT,
-        enabled BOOLEAN NOT NULL DEFAULT 0,
+        config_content TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         deleted_at TEXT
@@ -298,10 +296,8 @@ pub struct McpConnectorRecord {
     pub id: String,
     pub name: String,
     pub mcp_type: String,
-    pub endpoint: String,
     pub status: String,
-    pub allowed_domains_json: Option<String>,
-    pub enabled: bool,
+    pub config_content: String,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
@@ -312,10 +308,8 @@ pub struct NewMcpConnector {
     pub id: String,
     pub name: String,
     pub mcp_type: String,
-    pub endpoint: String,
     pub status: String,
-    pub allowed_domains_json: Option<String>,
-    pub enabled: bool,
+    pub config_content: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -332,11 +326,31 @@ impl SqliteStore {
 
     pub fn init_schema(&self) -> Result<(), StoreError> {
         let conn = self.open_conn().map_err(|e| StoreError::DbInitFailed(e.to_string()))?;
+        
+        // Migration: Check if the old 'endpoint' column exists in mcp_connectors.
+        // If it does, we drop the table so INIT_DDL can recreate it with the correct schema.
+        let mut should_drop_mcp = false;
+        if let Ok(mut stmt) = conn.prepare("PRAGMA table_info(mcp_connectors)") {
+            if let Ok(mut rows) = stmt.query([]) {
+                while let Ok(Some(row)) = rows.next() {
+                    let name: String = row.get(1).unwrap_or_default();
+                    if name == "endpoint" {
+                        should_drop_mcp = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if should_drop_mcp {
+            let _ = conn.execute("DROP TABLE IF EXISTS mcp_connectors", []);
+        }
+
         conn.execute_batch(INIT_DDL)
             .map_err(|e| StoreError::DbInitFailed(e.to_string()))?;
         // Migration for existing databases
         let _ = conn.execute("ALTER TABLE messages ADD COLUMN reasoning_md TEXT", []);
         let _ = conn.execute("ALTER TABLE mcp_connectors ADD COLUMN mcp_type TEXT NOT NULL DEFAULT 'stdio'", []);
+        let _ = conn.execute("ALTER TABLE mcp_connectors ADD COLUMN config_content TEXT NOT NULL DEFAULT '{}'", []);
         Ok(())
     }
 
@@ -724,16 +738,14 @@ impl SqliteStore {
         with_busy_retry(|| {
             let conn = self.open_conn()?;
             conn.execute(
-                "INSERT INTO mcp_connectors (id, name, mcp_type, endpoint, status, allowed_domains_json, enabled, created_at, updated_at, deleted_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)",
+                "INSERT INTO mcp_connectors (id, name, mcp_type, status, config_content, created_at, updated_at, deleted_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
                 params![
                     item.id,
                     item.name,
                     item.mcp_type,
-                    item.endpoint,
                     item.status,
-                    item.allowed_domains_json,
-                    item.enabled,
+                    item.config_content,
                     item.created_at,
                     item.updated_at
                 ],
@@ -746,7 +758,7 @@ impl SqliteStore {
         let conn = self.open_conn().map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, mcp_type, endpoint, status, allowed_domains_json, enabled, created_at, updated_at, deleted_at
+                "SELECT id, name, mcp_type, status, config_content, created_at, updated_at, deleted_at
                  FROM mcp_connectors
                  WHERE deleted_at IS NULL
                  ORDER BY updated_at DESC",
@@ -758,13 +770,11 @@ impl SqliteStore {
                     id: r.get(0)?,
                     name: r.get(1)?,
                     mcp_type: r.get(2)?,
-                    endpoint: r.get(3)?,
-                    status: r.get(4)?,
-                    allowed_domains_json: r.get(5)?,
-                    enabled: r.get(6)?,
-                    created_at: r.get(7)?,
-                    updated_at: r.get(8)?,
-                    deleted_at: r.get(9)?,
+                    status: r.get(3)?,
+                    config_content: r.get(4)?,
+                    created_at: r.get(5)?,
+                    updated_at: r.get(6)?,
+                    deleted_at: r.get(7)?,
                 })
             })
             .map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
@@ -781,29 +791,28 @@ impl SqliteStore {
         id: &str,
         name: &str,
         mcp_type: &str,
-        endpoint: &str,
         status: &str,
-        allowed_domains_json: Option<&str>,
-        enabled: bool,
+        config_content: &str,
         updated_at: &str,
     ) -> Result<(), StoreError> {
         with_busy_retry(|| {
             let conn = self.open_conn()?;
-            conn.execute(
+            let rows = conn.execute(
                 "UPDATE mcp_connectors
-                 SET name = ?1, mcp_type = ?2, endpoint = ?3, status = ?4, allowed_domains_json = ?5, enabled = ?6, updated_at = ?7
-                 WHERE id = ?8 AND deleted_at IS NULL",
+                 SET name = ?1, mcp_type = ?2, status = ?3, config_content = ?4, updated_at = ?5
+                 WHERE id = ?6 AND deleted_at IS NULL",
                 params![
                     name,
                     mcp_type,
-                    endpoint,
                     status,
-                    allowed_domains_json,
-                    enabled,
+                    config_content,
                     updated_at,
                     id
                 ],
             )?;
+            if rows == 0 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
             Ok(())
         })
     }

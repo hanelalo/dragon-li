@@ -140,8 +140,11 @@ async def _openai_stream(req: ChatRequestInput, profile: ApiProfile, model: str)
             
             for tc in tool_calls_accumulator.values():
                 name = tc["function"]["name"]
+                arguments_str = tc["function"]["arguments"]
+                logger.info(f"[Session: {req.session_id}] Executing MCP tool: {name} | Args: {arguments_str}")
+                
                 try:
-                    args = json.loads(tc["function"]["arguments"])
+                    args = json.loads(arguments_str)
                     result = await mcp_manager.call_tool(name, args)
                     if hasattr(result, "content") and isinstance(result.content, list):
                         texts = [c.text for c in result.content if hasattr(c, "text")]
@@ -149,8 +152,10 @@ async def _openai_stream(req: ChatRequestInput, profile: ApiProfile, model: str)
                     else:
                         result_str = str(result)
                 except Exception as e:
-                    logger.error(f"Tool {name} failed: {e}")
+                    logger.error(f"[Session: {req.session_id}] Tool {name} failed: {e}")
                     result_str = f"Error: {e}"
+                    
+                logger.info(f"[Session: {req.session_id}] MCP tool {name} returned {len(result_str)} chars.")
                     
                 messages.append({
                     "role": "tool",
@@ -274,8 +279,11 @@ async def _anthropic_stream(req: ChatRequestInput, profile: ApiProfile, model: s
             tool_results = []
             for tc in tool_calls:
                 name = tc["name"]
+                arguments_str = tc["input"]
+                logger.info(f"[Session: {req.session_id}] Executing MCP tool: {name} | Args: {arguments_str}")
+                
                 try:
-                    args = json.loads(tc["input"])
+                    args = json.loads(arguments_str)
                     result = await mcp_manager.call_tool(name, args)
                     if hasattr(result, "content") and isinstance(result.content, list):
                         texts = [c.text for c in result.content if hasattr(c, "text")]
@@ -283,8 +291,10 @@ async def _anthropic_stream(req: ChatRequestInput, profile: ApiProfile, model: s
                     else:
                         result_str = str(result)
                 except Exception as e:
-                    logger.error(f"Tool {name} failed: {e}")
+                    logger.error(f"[Session: {req.session_id}] Tool {name} failed: {e}")
                     result_str = f"Error: {e}"
+                    
+                logger.info(f"[Session: {req.session_id}] MCP tool {name} returned {len(result_str)} chars.")
                     
                 tool_results.append({
                     "type": "tool_result",

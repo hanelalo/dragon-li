@@ -99,6 +99,8 @@ fn main() {
             commands::mcp::mcp_connector_list,
             commands::mcp::mcp_connector_update,
             commands::mcp::mcp_connector_delete,
+            commands::mcp::mcp_connector_test,
+            commands::mcp::mcp_get_status,
             commands::memory::memory_extract_candidates,
             commands::memory::memory_count_pending,
             commands::memory::memory_list_candidates,

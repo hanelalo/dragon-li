@@ -119,10 +119,9 @@ CREATE TABLE IF NOT EXISTS capability_invocations (
 CREATE TABLE IF NOT EXISTS mcp_connectors (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    endpoint TEXT NOT NULL, -- Can be command (e.g., 'uvx mcp-server-sqlite') or URL
+    mcp_type TEXT NOT NULL, -- 'stdio', 'sse'
     status TEXT NOT NULL, -- 'configured', 'healthy', 'error', 'disabled'
-    allowed_domains_json TEXT,
-    enabled BOOLEAN NOT NULL DEFAULT 0,
+    config_content TEXT NOT NULL, -- JSON string containing type-specific config (e.g., command, args, env, url) and enabled flag
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     deleted_at TEXT

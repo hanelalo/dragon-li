@@ -18,12 +18,59 @@ const hasSelection = computed(() => !!activeMcp.value)
 async function loadMcps() {
   try {
     errorMsg.value = ''
+    
+    // Step 1: Fetch static configurations from DB first
     const res = await invoke('mcp_connector_list')
+    
     if (res.ok) {
-      mcps.value = res.data.connectors
+      // Map configurations with a 'loading' status initially
+      mcps.value = res.data.connectors.map(c => {
+        let config = {}
+        try {
+          config = JSON.parse(c.config_content)
+        } catch(e) {}
+        
+        return { 
+          ...c, 
+          _config: config,
+          // Set initial status to 'loading'
+          _status: { status: 'loading', tools: [] }
+        }
+      })
+      
       if (mcps.value.length > 0 && !activeMcpId.value) {
         activeMcpId.value = mcps.value[0].id
       }
+      
+      // Step 2: Asynchronously fetch runtime status without blocking UI
+      invoke('mcp_get_status').then(statusRes => {
+        if (statusRes.ok) {
+          const serverStatus = statusRes.data || {}
+          
+          // Update status for each connector based on the response
+          mcps.value = mcps.value.map(c => {
+            const currentStatus = serverStatus[c.name]
+            return {
+              ...c,
+              _status: currentStatus || { status: 'disconnected', tools: [] }
+            }
+          })
+        } else {
+           // Fallback to disconnected if status fetch explicitly failed
+           mcps.value = mcps.value.map(c => ({
+            ...c,
+            _status: { status: 'disconnected', tools: [] }
+          }))
+        }
+      }).catch(err => {
+         console.warn('Failed to fetch MCP status:', err)
+         // Fallback to disconnected on error
+         mcps.value = mcps.value.map(c => ({
+            ...c,
+            _status: { status: 'disconnected', tools: [] }
+          }))
+      })
+      
     } else {
       errorMsg.value = res.error?.message || 'Failed to load MCP connectors'
     }
@@ -36,16 +83,22 @@ function handleSelectMcp(id) {
   activeMcpId.value = id
 }
 
-function handleAddMcp() {
+async function handleAddMcp() {
   const newId = `mcp_${Date.now()}`
+  const initialConfig = {
+    enabled: false,
+    command: '',
+    args: [],
+    env: {},
+    url: ''
+  }
   const newMcp = {
     id: newId,
     name: 'New MCP Server',
     mcp_type: 'stdio',
-    endpoint: '',
     status: 'configured',
-    enabled: false,
-    allowed_domains_json: null,
+    config_content: JSON.stringify(initialConfig),
+    _config: initialConfig,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   }
@@ -55,29 +108,42 @@ function handleAddMcp() {
   activeMcpId.value = newId
   
   // Create in DB
-  invoke('mcp_connector_create', { connector: newMcp }).catch(err => {
+  const dbPayload = { ...newMcp }
+  delete dbPayload._config
+  delete dbPayload._status
+  
+  try {
+    const res = await invoke('mcp_connector_create', { connector: dbPayload })
+    if (!res.ok) {
+      errorMsg.value = `Failed to create MCP connector: ${res.error?.message}`
+      // Revert on error
+      mcps.value = mcps.value.filter(p => p.id !== newId)
+      if (activeMcpId.value === newId) {
+        activeMcpId.value = mcps.value.length > 0 ? mcps.value[0].id : ''
+      }
+    }
+  } catch (err) {
     errorMsg.value = `Failed to create MCP connector: ${err}`
     // Revert on error
     mcps.value = mcps.value.filter(p => p.id !== newId)
     if (activeMcpId.value === newId) {
       activeMcpId.value = mcps.value.length > 0 ? mcps.value[0].id : ''
     }
-  })
+  }
 }
 
 async function handleSaveMcp(updatedMcp) {
   try {
     errorMsg.value = ''
     updatedMcp.updated_at = new Date().toISOString()
+    updatedMcp.config_content = JSON.stringify(updatedMcp._config)
     
     const res = await invoke('mcp_connector_update', {
       id: updatedMcp.id,
       name: updatedMcp.name,
       mcpType: updatedMcp.mcp_type,
-      endpoint: updatedMcp.endpoint,
       status: updatedMcp.status,
-      allowedDomainsJson: updatedMcp.allowed_domains_json,
-      enabled: updatedMcp.enabled,
+      configContent: updatedMcp.config_content,
       updatedAt: updatedMcp.updated_at
     })
     
@@ -95,6 +161,29 @@ async function handleSaveMcp(updatedMcp) {
   }
 }
 
+async function handleTestMcp(mcp) {
+  try {
+    errorMsg.value = ''
+    isTesting.value = true
+    const res = await invoke('mcp_connector_test', {
+      mcpType: mcp.mcp_type,
+      configContent: JSON.stringify(mcp._config)
+    })
+    
+    if (res.ok) {
+      alert('测试连接成功！')
+      mcp._status = { status: 'connected', tools: res.data.tools || [] }
+    } else {
+      errorMsg.value = res.error?.message || '测试连接失败'
+      mcp._status = { status: 'error', tools: [] }
+    }
+  } catch (err) {
+    errorMsg.value = String(err)
+    mcp._status = { status: 'error', tools: [] }
+  } finally {
+    isTesting.value = false
+  }
+}
 async function handleDeleteMcp(id) {
   try {
     errorMsg.value = ''
@@ -158,6 +247,7 @@ onMounted(() => {
           :mcp="activeMcp"
           @save="handleSaveMcp"
           @delete="handleDeleteMcp"
+          @test="handleTestMcp"
         />
         <div v-else class="no-selection">
           <p>请选择一个 MCP 连接器或新建</p>
