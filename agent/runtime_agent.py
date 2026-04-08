@@ -22,6 +22,7 @@ from models import ChatRequestInput, TitleGenerateRequest, TitleGenerateResponse
 from llm_provider import chat_stream_generator, generate_title, extract_memories
 from mcp_client import mcp_manager
 from mcp.client.stdio import StdioServerParameters
+from skill_manager import skill_manager
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -104,7 +105,8 @@ async def load_mcp_from_db():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 将 MCP 加载放到后台任务中，避免阻塞服务启动
+    # 将 MCP 和 Skill 加载放到后台任务中，避免阻塞服务启动
+    asyncio.create_task(asyncio.to_thread(skill_manager.scan_skills_directory))
     asyncio.create_task(load_mcp_from_db())
     logger.info(f"====== Python Agent Started in {time.time() - _START_TIME:.3f} seconds ======")
     yield

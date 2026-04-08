@@ -1,7 +1,7 @@
-- [ ] Update `apps/desktop/src-tauri/src/config_guardrails.rs` to remove `skill_execute` from the MVP block list.
-- [ ] Create `agent/skill_manager.py` with a basic `SkillManager` singleton class.
-- [ ] Implement `scan_skills_directory()` to iterate over `~/.dragon-li/skills/` and find all `SKILL.md` files.
-- [ ] Implement a parser for `SKILL.md` to separate YAML frontmatter and Markdown body.
-- [ ] Implement SQLite DB sync logic in `SkillManager` to upsert parsed skills into the `capabilities` table.
-- [ ] Ensure `scan_skills_directory()` is called on Agent startup.
-- [ ] Add unit tests for `SKILL.md` parser (handling missing frontmatter, missing required fields).
+- [x] Update `apps/desktop/src-tauri/src/config_guardrails.rs` to remove `skill_execute` from the MVP block list.
+- [x] Create `agent/skill_manager.py` with a basic `SkillManager` singleton class.
+- [x] Implement `scan_skills_directory()` to iterate over `~/.dragon-li/skills/` and find all `SKILL.md` files.
+- [x] Implement a parser for `SKILL.md` to separate YAML frontmatter and Markdown body.
+- [x] Implement SQLite DB sync logic in `SkillManager` to upsert parsed skills into the `capabilities` table.
+- [x] Ensure `scan_skills_directory()` is called on Agent startup.
+- [x] Add unit tests for `SKILL.md` parser (handling missing frontmatter, missing required fields).

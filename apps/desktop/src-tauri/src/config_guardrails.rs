@@ -172,7 +172,12 @@ impl Guardrails {
         };
         let normalized = normalize_path(&absolute)?;
         let resolved = canonicalize_allow_missing(&normalized)?;
-        if !resolved.starts_with(&self.runtime_root_canonical) {
+        
+        // Allow access to the skills directory, which may be a symlink
+        let skills_dir = canonicalize_allow_missing(&self.runtime_root.join("skills"))
+            .unwrap_or_else(|_| self.runtime_root.join("skills"));
+            
+        if !resolved.starts_with(&self.runtime_root_canonical) && !resolved.starts_with(&skills_dir) {
             return Err(GuardrailError::PathDenied(format!(
                 "path is outside allowed root: {}",
                 resolved.display()
@@ -184,7 +189,7 @@ impl Guardrails {
 
     pub fn validate_capability(&self, capability: &str) -> Result<(), GuardrailError> {
         match capability {
-            "shell_exec" | "skill_execute" | "mcp_execute" => {
+            "shell_exec" | "mcp_execute" => {
                 Err(GuardrailError::CapabilityDenied(format!("{capability} is blocked in MVP")))
             }
             _ => Ok(()),
