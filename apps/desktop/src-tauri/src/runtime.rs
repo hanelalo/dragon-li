@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tracing::{info, error};
 use tauri_plugin_shell::ShellExt;
+use tauri::Manager;
 
 const RUNTIME_DIR_NAME: &str = ".dragon-li";
 const RUNTIME_SUBDIRS: [&str; 6] = ["data", "memory", "config", "logs", "backups", "run"];
@@ -103,7 +104,7 @@ impl AppState {
 
 pub struct AgentManager {
     uds_path: PathBuf,
-    child: Option<tauri_plugin_shell::process::CommandChild>,
+    child: Option<std::process::Child>,
 }
 
 impl AgentManager {
@@ -120,10 +121,8 @@ impl AgentManager {
 
     pub fn start(&mut self, app: &tauri::AppHandle) -> Result<Option<u32>, RuntimeError> {
         info!("Starting Agent sidecar...");
-        if let Some(child) = self.child.take() {
-            info!("Found existing agent process (PID: {}), killing it...", child.pid());
-            // We cannot easily poll sidecar child exit status synchronously.
-            // If it exists, we assume it's running or we just kill and restart.
+        if let Some(mut child) = self.child.take() {
+            info!("Found existing agent process (PID: {}), killing it...", child.id());
             let _ = child.kill();
         }
 
@@ -138,38 +137,86 @@ impl AgentManager {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        info!("Spawning sidecar 'runtime_agent'...");
-        let sidecar = app.shell().sidecar("runtime_agent").map_err(|e| {
-            error!("Failed to initialize sidecar 'runtime_agent': {}", e);
-            RuntimeError::AgentScriptMissing(e.to_string())
-        })?;
+        info!("Ensuring agent is extracted locally...");
+        let runtime_root = self.uds_path.parent().unwrap().parent().unwrap();
+        let bin_dir = runtime_root.join("bin");
+        let agent_bin_path = bin_dir.join("runtime_agent").join("runtime_agent");
+
+        if !agent_bin_path.exists() {
+            info!("Agent not found locally at {:?}, extracting from resources...", agent_bin_path);
+            let _ = std::fs::create_dir_all(&bin_dir);
+            
+            let resource_dir = app.path().resource_dir().map_err(|e: tauri::Error| {
+                error!("Failed to get resource dir: {}", e);
+                RuntimeError::AgentScriptMissing(e.to_string())
+            })?;
+            
+            let tar_path = resource_dir.join("resources").join("runtime_agent.tar.gz");
+            
+            if tar_path.exists() {
+                let output = std::process::Command::new("tar")
+                    .arg("-xzf")
+                    .arg(&tar_path)
+                    .arg("-C")
+                    .arg(&bin_dir)
+                    .output()
+                    .map_err(|e| RuntimeError::AgentScriptMissing(format!("tar error: {}", e)))?;
+                    
+                if !output.status.success() {
+                    let err_msg = String::from_utf8_lossy(&output.stderr);
+                    error!("Failed to extract agent tarball: {}", err_msg);
+                    return Err(RuntimeError::AgentScriptMissing("Failed to extract agent tarball".into()));
+                }
+                info!("Agent extracted successfully to {:?}", bin_dir);
+            } else {
+                error!("Agent tarball not found in resources: {:?}", tar_path);
+                return Err(RuntimeError::AgentScriptMissing("Agent tarball not found in resources".into()));
+            }
+        }
         
-        let db_path = default_db_path(&self.uds_path.parent().unwrap().parent().unwrap());
+        let db_path = default_db_path(&runtime_root);
         
-        let (mut rx, child) = sidecar
+        use std::process::Stdio;
+        
+        let mut child = std::process::Command::new(&agent_bin_path)
+            .env("PYTHONUNBUFFERED", "1")
             .arg("--serve")
             .arg("--uds")
             .arg(self.uds_path.to_str().unwrap_or_default())
             .arg("--db-path")
             .arg(db_path.to_str().unwrap_or_default())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
-                error!("Failed to spawn sidecar: {}", e);
+                error!("Failed to spawn agent: {}", e);
                 RuntimeError::AgentScriptMissing(e.to_string())
             })?;
 
-        info!("Agent spawned successfully with PID: {}", child.pid());
+        let pid = child.id();
+        info!("Agent spawned successfully with PID: {}", pid);
 
-        tauri::async_runtime::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                match event {
-                    tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
-                        info!("[Agent] {}", String::from_utf8_lossy(&line));
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            if let Some(out) = stdout {
+                let reader = BufReader::new(out);
+                for line in reader.lines() {
+                    if let Ok(l) = line {
+                        info!("[Agent] {}", l);
                     }
-                    tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
-                        let text = String::from_utf8_lossy(&line);
-                        // Python logger writes everything to stderr by default.
-                        // Only log as error if it contains actual error indicators, otherwise info.
+                }
+            }
+        });
+
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            if let Some(err) = stderr {
+                let reader = BufReader::new(err);
+                for line in reader.lines() {
+                    if let Ok(text) = line {
                         let lower = text.to_lowercase();
                         if lower.contains("error") || lower.contains("traceback") || lower.contains("exception") || lower.contains("fatal") {
                             error!("[Agent] {}", text);
@@ -177,20 +224,18 @@ impl AgentManager {
                             info!("[Agent] {}", text);
                         }
                     }
-                    _ => {}
                 }
             }
         });
 
-        let pid = child.pid();
         self.child = Some(child);
 
         Ok(Some(pid))
     }
 
     pub fn stop(&mut self) -> Result<(), RuntimeError> {
-        if let Some(child) = self.child.take() {
-            info!("Stopping Agent sidecar (PID: {})...", child.pid());
+        if let Some(mut child) = self.child.take() {
+            info!("Stopping Agent sidecar (PID: {})...", child.id());
             let _ = child.kill();
         } else {
             info!("Stop requested, but no agent process was running.");
@@ -201,7 +246,7 @@ impl AgentManager {
 
     pub fn status(&mut self) -> Result<(bool, Option<u32>), RuntimeError> {
         if let Some(child) = self.child.as_ref() {
-            return Ok((true, Some(child.pid())));
+            return Ok((true, Some(child.id())));
         }
         Ok((false, None))
     }

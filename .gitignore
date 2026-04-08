@@ -56,3 +56,4 @@ build/
 venv/
 binaries/
 test.db
+apps/desktop/src-tauri/resources/

@@ -22,7 +22,8 @@
     }
   },
   "bundle": {
-    "externalBin": ["binaries/runtime_agent"],
+    "resources": ["resources/runtime_agent.tar.gz"],
+    "externalBin": [],
     "active": true,
     "icon": [
       "icons/32x32.png",
