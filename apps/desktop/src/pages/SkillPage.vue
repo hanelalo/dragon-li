@@ -75,8 +75,8 @@ async function openSkillFolder(skill) {
       const rootPath = infoRes.data.runtime_root
       const skillPath = `${rootPath}/skills/${skill.name}`
       // Tauri v2 plugin-shell regex defaults to ^...$ 
-      // We pass the raw absolute path and allow it via regex in capabilities
-      await open(skillPath)
+      // Using open plugin with file:/// schema and bypassing regex
+      await open(`file://${skillPath}`)
     } else {
       errorMsg.value = 'Failed to get runtime root directory'
     }

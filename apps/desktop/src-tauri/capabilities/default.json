@@ -26,8 +26,13 @@
     {
       "identifier": "shell:allow-open",
       "allow": [
-        { "name": "^((mailto:\\w+)|(tel:\\w+)|(https?://\\w+)|(file:///.+)).*" },
-        { "name": "^/.+" }
+        {
+          "name": ".*",
+          "validator": {
+            "raw": true,
+            "validator": ".*"
+          }
+        }
       ]
     }
   ]
