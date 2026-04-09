@@ -1,6 +1,0 @@
-- [ ] Update `llm_provider.py` to stop calling `mcp_manager.get_all_tools()` when a skill is active.
-- [ ] Implement `SkillManager.get_tools_for_skill(skill_name)` to fetch and return only the MCP tools listed in `allowed-tools`.
-- [ ] Add logic in `SkillManager` to scan the `scripts/` folder for executable tools and extract their schemas (e.g., via `--schema` execution).
-- [ ] Implement `SkillManager.execute_local_tool()` using `subprocess.run` with `cwd` set to the skill directory.
-- [ ] Integrate local tool execution into `llm_provider.py`'s tool execution loop.
-- [ ] Create a dummy skill with a local script to perform an end-to-end test.
