@@ -15,7 +15,7 @@ from core.models import (
     TitleGenerateRequest,
     MemoryExtractRequest
 )
-from core.prompts import TITLE_GENERATION_PROMPT, MEMORY_EXTRACTION_PROMPT, CHAT_SYSTEM_PROMPT_TEMPLATE
+from core.prompts import prompt_manager
 from skills.manager import skill_manager
 
 from llm.openai_provider import _openai_stream
@@ -47,7 +47,7 @@ def _build_chat_system_content(req: ChatRequestInput) -> str:
     memory_section = f"# Context (Injected Memories)\n{memory_part}\n\n" if memory_part else ""
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    base_system = CHAT_SYSTEM_PROMPT_TEMPLATE.format(memory_section=memory_section, current_time=current_time)
+    base_system = prompt_manager.CHAT_SYSTEM_PROMPT_TEMPLATE.format(memory_section=memory_section, current_time=current_time)
     system_parts = [base_system, req.prompt.system, req.prompt.runtime]
     
     return "\n\n".join(p for p in system_parts if p.strip())
@@ -99,7 +99,7 @@ async def generate_title(req: TitleGenerateRequest) -> str:
         res = await client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": TITLE_GENERATION_PROMPT},
+                {"role": "system", "content": prompt_manager.TITLE_GENERATION_PROMPT},
                 {"role": "user", "content": user_content}
             ]
         )
@@ -109,7 +109,7 @@ async def generate_title(req: TitleGenerateRequest) -> str:
         res = await client.messages.create(
             model=model,
             max_tokens=1024,
-            system=TITLE_GENERATION_PROMPT,
+            system=prompt_manager.TITLE_GENERATION_PROMPT,
             messages=[{"role": "user", "content": user_content}]
         )
         return res.content[0].text
@@ -126,7 +126,7 @@ async def extract_memories(req: MemoryExtractRequest) -> dict:
     
     if profile.provider == "openai":
         client = AsyncOpenAI(api_key=profile.api_key, base_url=profile.base_url)
-        messages = [{"role": "system", "content": MEMORY_EXTRACTION_PROMPT}]
+        messages = [{"role": "system", "content": prompt_manager.MEMORY_EXTRACTION_PROMPT}]
         for msg in req.history:
             messages.append({"role": msg.role, "content": msg.content})
         messages.append({"role": "user", "content": user_content})
@@ -159,7 +159,7 @@ async def extract_memories(req: MemoryExtractRequest) -> dict:
         res = await client.messages.create(
             model=model,
             max_tokens=1024,
-            system=MEMORY_EXTRACTION_PROMPT,
+            system=prompt_manager.MEMORY_EXTRACTION_PROMPT,
             messages=messages
         )
         content = "{" + res.content[0].text

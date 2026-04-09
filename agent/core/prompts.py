@@ -1,4 +1,6 @@
-TITLE_GENERATION_PROMPT = """# Role
+import os
+
+DEFAULT_TITLE_GENERATION_PROMPT = """# Role
 You are a strict title generator for chat sessions.
 
 # Task
@@ -24,7 +26,7 @@ Title: Rust 文件读取函数
 User text: "What is the capital of France?"
 Title: Capital of France"""
 
-MEMORY_EXTRACTION_PROMPT = """# Role
+DEFAULT_MEMORY_EXTRACTION_PROMPT = """# Role
 You are an intelligent memory extraction engine for a personal AI assistant.
 
 # Task
@@ -99,7 +101,7 @@ Extract new memories:
   "memories": []
 }"""
 
-CHAT_SYSTEM_PROMPT_TEMPLATE = """# Role
+DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE = """# Role
 You are an intelligent, helpful, and highly capable personal AI assistant.
 
 # Current Environment
@@ -119,3 +121,59 @@ The memories provided may or may not be relevant to the user's current query. Yo
 - DO NOT use or mention the memories if they are irrelevant to the current conversation.
 - DO NOT artificially transition the topic to use a memory.
 - DO NOT explicitly state that you are using a memory unless asked."""
+
+class PromptManager:
+    def __init__(self):
+        self.prompts_dir = os.path.expanduser("~/.dragon-li/prompts")
+        self.files = {
+            "title_generation.md": DEFAULT_TITLE_GENERATION_PROMPT,
+            "memory_extraction.md": DEFAULT_MEMORY_EXTRACTION_PROMPT,
+            "chat_system.md": DEFAULT_CHAT_SYSTEM_PROMPT_TEMPLATE,
+        }
+        self._cache = {}
+        self._mtimes = {}
+        self.init_prompts()
+
+    def init_prompts(self):
+        os.makedirs(self.prompts_dir, exist_ok=True)
+        for filename, default_content in self.files.items():
+            filepath = os.path.join(self.prompts_dir, filename)
+            if not os.path.exists(filepath):
+                try:
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write(default_content)
+                except Exception as e:
+                    import logging
+                    logging.getLogger("uvicorn.error").error(f"Failed to initialize prompt file {filepath}: {e}")
+
+    def _get_prompt(self, filename: str) -> str:
+        filepath = os.path.join(self.prompts_dir, filename)
+        if not os.path.exists(filepath):
+            return self.files[filename]
+        
+        try:
+            mtime = os.path.getmtime(filepath)
+            if filename not in self._cache or self._mtimes.get(filename) != mtime:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    self._cache[filename] = f.read()
+                self._mtimes[filename] = mtime
+                
+            return self._cache[filename]
+        except Exception as e:
+            import logging
+            logging.getLogger("uvicorn.error").error(f"Failed to read prompt file {filepath}: {e}")
+            return self.files[filename]
+
+    @property
+    def TITLE_GENERATION_PROMPT(self):
+        return self._get_prompt("title_generation.md")
+
+    @property
+    def MEMORY_EXTRACTION_PROMPT(self):
+        return self._get_prompt("memory_extraction.md")
+
+    @property
+    def CHAT_SYSTEM_PROMPT_TEMPLATE(self):
+        return self._get_prompt("chat_system.md")
+
+prompt_manager = PromptManager()
