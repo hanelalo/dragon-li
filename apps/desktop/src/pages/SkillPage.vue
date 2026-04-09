@@ -74,7 +74,9 @@ async function openSkillFolder(skill) {
     if (infoRes.ok && infoRes.data?.runtime_root) {
       const rootPath = infoRes.data.runtime_root
       const skillPath = `${rootPath}/skills/${skill.name}`
-      await open(skillPath)
+      // Tauri v2 plugin-shell regex requires exact prefix like file:/// or valid url
+      // MacOS path starts with /, so we need to prepend 'file://'
+      await open(`file://${skillPath}`)
     } else {
       errorMsg.value = 'Failed to get runtime root directory'
     }
