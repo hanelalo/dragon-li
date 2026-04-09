@@ -49,6 +49,17 @@ async def _anthropic_stream(req: ChatRequestInput, profile: ApiProfile, model: s
             }
             
             anthropic_tools = get_tools_for_anthropic(req.enable_web_search, req.cfg)
+            
+            from skills.manager import skill_manager
+            if not getattr(req, "explicit_skill_id", None):
+                delegate_schema = skill_manager.get_delegate_tool_schema()
+                if delegate_schema:
+                    anthropic_tools.append({
+                        "name": delegate_schema["function"]["name"],
+                        "description": delegate_schema["function"]["description"],
+                        "input_schema": delegate_schema["function"]["parameters"]
+                    })
+
             if anthropic_tools:
                 kwargs["tools"] = anthropic_tools
 
@@ -112,6 +123,60 @@ async def _anthropic_stream(req: ChatRequestInput, profile: ApiProfile, model: s
                 
             messages.append({"role": "assistant", "content": assistant_content})
             
+            delegated = False
+            for tc in tool_calls:
+                name = tc["name"]
+                if name == "delegate_to_skill":
+                    arguments_str = tc["input"]
+                    args = json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
+                    skill_name = args.get("skill_name")
+                    task_context = args.get("task_context")
+                    
+                    if skill_name and task_context:
+                        from skills.manager import skill_manager
+                        conn = skill_manager.get_db_connection()
+                        skill_id = None
+                        if conn:
+                            try:
+                                cursor = conn.cursor()
+                                cursor.execute("SELECT id FROM capabilities WHERE type = 'skill' AND name = ?", (skill_name,))
+                                row = cursor.fetchone()
+                                if row:
+                                    skill_id = row["id"]
+                            except Exception as e:
+                                logger.error(f"DB Error fetching skill: {e}")
+                            finally:
+                                conn.close()
+                                
+                        if skill_id:
+                            logger.info(f"Delegating to skill {skill_name} ({skill_id}) with context: {task_context}")
+                            req.explicit_skill_id = skill_id
+                            req.prompt.user = task_context
+                            
+                            from llm.provider import _build_chat_system_content
+                            system_content = _build_chat_system_content(req)
+                            
+                            raw_messages = []
+                            for msg in req.history:
+                                raw_messages.append((msg.role, msg.content))
+                            raw_messages.append(("user", task_context))
+                            
+                            new_messages = []
+                            for role, content in raw_messages:
+                                if new_messages and new_messages[-1]["role"] == role:
+                                    new_messages[-1]["content"] += f"\n\n{content}"
+                                else:
+                                    new_messages.append({"role": role, "content": content})
+                            if new_messages and new_messages[0]["role"] == "assistant":
+                                new_messages.insert(0, {"role": "user", "content": " "})
+                                
+                            messages = new_messages
+                            delegated = True
+                            break
+
+            if delegated:
+                continue
+
             # Execute tool calls
             tool_results = []
             for tc in tool_calls:

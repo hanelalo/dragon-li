@@ -163,4 +163,59 @@ class SkillManager:
         finally:
             conn.close()
 
+    def get_delegate_tool_schema(self):
+        """
+        Dynamically builds the tool schema for 'delegate_to_skill'.
+        Returns None if no skills are active.
+        """
+        conn = self.get_db_connection()
+        if not conn:
+            return None
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, name, description FROM capabilities WHERE type = 'skill' AND enabled = 1 AND deleted_at IS NULL")
+            rows = cursor.fetchall()
+            if not rows:
+                return None
+            
+            skill_names = []
+            skill_descriptions = []
+            
+            for row in rows:
+                name = row["name"]
+                desc = row["description"]
+                skill_names.append(name)
+                skill_descriptions.append(f"- **{name}**: {desc}")
+                
+            desc_text = "Delegate the task to a specialized skill expert if the user's request matches one of the following domains:\n" + "\n".join(skill_descriptions)
+            
+            return {
+                "type": "function",
+                "function": {
+                    "name": "delegate_to_skill",
+                    "description": desc_text,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "skill_name": {
+                                "type": "string",
+                                "enum": skill_names,
+                                "description": "The exact name of the skill to delegate to."
+                            },
+                            "task_context": {
+                                "type": "string",
+                                "description": "A refined, detailed prompt or context extracted from the user's request, instructing the skill expert what needs to be done."
+                            }
+                        },
+                        "required": ["skill_name", "task_context"]
+                    }
+                }
+            }
+        except Exception as e:
+            logger.error(f"Failed to build delegate tool schema: {e}")
+            return None
+        finally:
+            conn.close()
+
 skill_manager = SkillManager()

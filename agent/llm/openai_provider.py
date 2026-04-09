@@ -43,6 +43,12 @@ async def _openai_stream(req: ChatRequestInput, profile: ApiProfile, model: str,
                 "stream_options": {"include_usage": True},
             }
             tools = get_tools_for_openai(req.enable_web_search, req.cfg)
+            
+            from skills.manager import skill_manager
+            if not getattr(req, "explicit_skill_id", None):
+                delegate_schema = skill_manager.get_delegate_tool_schema()
+                if delegate_schema:
+                    tools.append(delegate_schema)
 
             if tools:
                 kwargs["tools"] = tools
@@ -90,6 +96,50 @@ async def _openai_stream(req: ChatRequestInput, profile: ApiProfile, model: str,
                 "content": accumulated_content or None,
                 "tool_calls": list(tool_calls_accumulator.values())
             })
+            
+            delegated = False
+            for tc in tool_calls_accumulator.values():
+                name = tc["function"]["name"]
+                if name == "delegate_to_skill":
+                    arguments_str = tc["function"]["arguments"]
+                    args = json.loads(arguments_str) if arguments_str else {}
+                    skill_name = args.get("skill_name")
+                    task_context = args.get("task_context")
+                    
+                    if skill_name and task_context:
+                        from skills.manager import skill_manager
+                        conn = skill_manager.get_db_connection()
+                        skill_id = None
+                        if conn:
+                            try:
+                                cursor = conn.cursor()
+                                cursor.execute("SELECT id FROM capabilities WHERE type = 'skill' AND name = ?", (skill_name,))
+                                row = cursor.fetchone()
+                                if row:
+                                    skill_id = row["id"]
+                            except Exception as e:
+                                logger.error(f"DB Error fetching skill: {e}")
+                            finally:
+                                conn.close()
+                                
+                        if skill_id:
+                            logger.info(f"Delegating to skill {skill_name} ({skill_id}) with context: {task_context}")
+                            req.explicit_skill_id = skill_id
+                            req.prompt.user = task_context
+                            
+                            from llm.provider import _build_chat_system_content
+                            system_content = _build_chat_system_content(req)
+                            
+                            messages = [{"role": "system", "content": system_content}]
+                            for msg in req.history:
+                                messages.append({"role": msg.role, "content": msg.content})
+                            messages.append({"role": "user", "content": task_context})
+                            
+                            delegated = True
+                            break
+            
+            if delegated:
+                continue
             
             for tc in tool_calls_accumulator.values():
                 name = tc["function"]["name"]
