@@ -5,6 +5,7 @@ datas = []
 datas += collect_data_files('trafilatura')
 datas += collect_data_files('courlan')
 datas += collect_data_files('htmldate')
+datas += collect_data_files('justext')
 
 a = Analysis(
     ['runtime_agent.py'],

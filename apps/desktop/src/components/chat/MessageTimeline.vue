@@ -2,6 +2,7 @@
 import { defineProps, ref, watch, nextTick } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { open } from '@tauri-apps/plugin-shell'
 
 const props = defineProps({
   messages: {
@@ -56,10 +57,25 @@ async function copyText(text, msgId) {
     console.error('Failed to copy text', err)
   }
 }
+
+async function handleTimelineClick(event) {
+  const target = event.target.closest('a')
+  if (target && target.href) {
+    try {
+      const url = new URL(target.href)
+      if ((url.protocol === 'http:' || url.protocol === 'https:') && url.host !== window.location.host) {
+        event.preventDefault()
+        await open(target.href)
+      }
+    } catch (err) {
+      console.error('Failed to open external link', err)
+    }
+  }
+}
 </script>
 
 <template>
-  <div class="message-timeline" ref="timelineRef">
+  <div class="message-timeline" ref="timelineRef" @click="handleTimelineClick">
     <div v-if="messages.length === 0" class="empty-state">
       <div class="icon">✨</div>
       <p>How can I help you today?</p>

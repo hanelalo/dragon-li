@@ -1130,6 +1130,7 @@ mod tests {
                 error_code: None,
                 error_message: None,
                 retryable: None,
+                explicit_skill_id: None,
                 created_at: now_iso(),
             })
             .expect("create message");
@@ -1296,7 +1297,8 @@ mod tests {
         let merged = pipeline
             .review_candidate(ReviewCandidateInput {
                 candidate_id: extracted[0].id.clone(),
-                action: "merge".to_string(), merge_target_id: None,
+                action: "merge".to_string(),
+                merge_target_id: Some(first.memory_id.clone()),
             })
             .expect("merge ok");
         assert_eq!(merged.status, "conflicted");
