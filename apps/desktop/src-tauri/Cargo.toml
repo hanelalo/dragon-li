@@ -25,6 +25,7 @@ tauri-plugin-dialog = "2.7.0"
 tauri-plugin-shell = "2.3.5"
 
 
+sysinfo = "0.32"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

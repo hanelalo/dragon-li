@@ -450,7 +450,7 @@ pub fn chat_send(
                                 };
 
                                 let extraction_service = ChatService::new(uds_path.clone());
-                                match extraction_service.post_uds_json::<_, AutoExtractionResult>("/v1/memory/extract", &extract_req).await {
+                                match extraction_service.post_uds_json::<_, AutoExtractionResult>("/v1/chat/memory/extract", &extract_req).await {
                                     Ok(res) => {
                                         if !res.memories.is_empty() {
                                             match memory_for_bg.save_extracted_candidates(&session_id, &user_msg.id, res) {

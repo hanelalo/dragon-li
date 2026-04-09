@@ -1,6 +1,5 @@
-import json
-from typing import List, Optional, Literal, Union, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from typing import List, Optional, Literal, Union
 
 class ChatPromptLayer(BaseModel):
     system: str
@@ -28,7 +27,7 @@ class ToolsConfig(BaseModel):
 
 class ApiProfilesConfig(BaseModel):
     profiles: List[ApiProfile]
-    tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    tools: ToolsConfig = ToolsConfig()
 
 class ChatRequestInput(BaseModel):
     profile_id: str
@@ -37,8 +36,7 @@ class ChatRequestInput(BaseModel):
     model: Optional[str] = None
     prompt: ChatPromptLayer
     enable_web_search: bool = False
-    history: List[ChatMessageContext] = Field(default_factory=list)
-    # The config is passed from Rust since Python doesn't load it directly here
+    history: List[ChatMessageContext] = []
     cfg: Optional[ApiProfilesConfig] = None
 
 class ChatStreamEventDelta(BaseModel):
@@ -71,9 +69,8 @@ ChatStreamEvent = Union[
     ChatStreamEventAborted,
 ]
 
+import json
 def event_to_json(event: ChatStreamEvent) -> str:
-    # Match Rust snake_case tag for enum
-    # We output exactly like { "type": "delta", "text": "..." }
     return json.dumps(event.model_dump(exclude_none=True), separators=(',', ':'))
 
 class TitleGenerateRequest(BaseModel):
@@ -91,7 +88,7 @@ class MemoryExtractRequest(BaseModel):
     session_id: str
     user_text: str
     assistant_text: str
-    history: List[ChatMessageContext] = Field(default_factory=list)
+    history: List[ChatMessageContext] = []
     cfg: Optional[ApiProfilesConfig] = None
 
 class MemoryCandidate(BaseModel):

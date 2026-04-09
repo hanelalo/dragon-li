@@ -6,3 +6,4 @@ pub mod mcp;
 pub mod memory;
 pub mod session;
 pub mod system;
+pub mod skill;

@@ -120,9 +120,31 @@ impl AgentManager {
 
     pub fn start(&mut self, app: &tauri::AppHandle) -> Result<Option<u32>, RuntimeError> {
         info!("Starting Agent sidecar...");
+        let mut killed_any = false;
+
         if let Some(mut child) = self.child.take() {
             info!("Found existing agent process (PID: {}), killing it...", child.id());
             let _ = child.kill();
+            killed_any = true;
+        }
+
+        // Kill any orphaned runtime_agent processes
+        let sys = sysinfo::System::new_all();
+        for (pid, process) in sys.processes() {
+            let name = process.name().to_string_lossy();
+            if name.contains("runtime_agent") {
+                if process.kill() {
+                    info!("Killed orphaned runtime_agent process (PID: {})", pid);
+                    killed_any = true;
+                } else {
+                    error!("Failed to kill orphaned runtime_agent process (PID: {})", pid);
+                }
+            }
+        }
+
+        if killed_any {
+            // Give processes a brief moment to terminate
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
 
         // Ensure old socket is removed

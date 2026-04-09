@@ -314,6 +314,20 @@ pub struct NewMcpConnector {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityRecord {
+    pub id: String,
+    pub r#type: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub input_schema_json: Option<String>,
+    pub risk_level: String,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub deleted_at: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct SqliteStore {
     db_path: PathBuf,
@@ -826,6 +840,56 @@ impl SqliteStore {
                  WHERE id = ?2 AND deleted_at IS NULL",
                 params![deleted_at, id],
             )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_skills(&self) -> Result<Vec<CapabilityRecord>, StoreError> {
+        let conn = self.open_conn().map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, type, name, description, input_schema_json, risk_level, enabled, created_at, updated_at, deleted_at
+                 FROM capabilities
+                 WHERE type = 'skill' AND deleted_at IS NULL
+                 ORDER BY name ASC",
+            )
+            .map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(CapabilityRecord {
+                    id: r.get(0)?,
+                    r#type: r.get(1)?,
+                    name: r.get(2)?,
+                    description: r.get(3)?,
+                    input_schema_json: r.get(4)?,
+                    risk_level: r.get(5)?,
+                    enabled: r.get(6)?,
+                    created_at: r.get(7)?,
+                    updated_at: r.get(8)?,
+                    deleted_at: r.get(9)?,
+                })
+            })
+            .map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
+        collect_rows(rows).map_err(|e| StoreError::DbReadFailed(e.to_string()))
+    }
+
+    pub fn update_skill_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+        updated_at: &str,
+    ) -> Result<(), StoreError> {
+        with_busy_retry(|| {
+            let conn = self.open_conn()?;
+            let rows = conn.execute(
+                "UPDATE capabilities
+                 SET enabled = ?1, updated_at = ?2
+                 WHERE id = ?3 AND type = 'skill' AND deleted_at IS NULL",
+                params![enabled, updated_at, id],
+            )?;
+            if rows == 0 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
             Ok(())
         })
     }

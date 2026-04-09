@@ -2,7 +2,8 @@ export const routes = [
   { path: '/chat', key: 'chat', label: 'Chat' },
   { path: '/settings', key: 'settings', label: 'Settings' },
   { path: '/memory', key: 'memory', label: 'Memory' },
-  { path: '/mcp', key: 'mcp', label: 'MCP' }
+  { path: '/mcp', key: 'mcp', label: 'MCP' },
+  { path: '/skill', key: 'skill', label: 'Skill' }
 ]
 
 const routePaths = new Set(routes.map((route) => route.path))

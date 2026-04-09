@@ -101,6 +101,9 @@ fn main() {
             commands::mcp::mcp_connector_delete,
             commands::mcp::mcp_connector_test,
             commands::mcp::mcp_get_status,
+            commands::skill::skill_list,
+            commands::skill::skill_toggle,
+            commands::skill::skill_rescan,
             commands::memory::memory_extract_candidates,
             commands::memory::memory_count_pending,
             commands::memory::memory_list_candidates,
@@ -111,6 +114,17 @@ fn main() {
             commands::memory::memory_search,
             commands::memory::memory_list_long_term
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| match event {
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                tracing::info!("App exit requested, stopping agent...");
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    if let Ok(mut manager) = state.agent_manager.lock() {
+                        let _ = manager.stop();
+                    }
+                }
+            }
+            _ => {}
+        });
 }

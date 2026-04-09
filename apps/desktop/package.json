@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "build:agent": "cd ../../agent && source venv/bin/activate && pip install -r requirements.txt && export PYINSTALLER_CONFIG_DIR=/tmp/pyinstaller_config && pyinstaller --onedir --name runtime_agent runtime_agent.py && rm -rf ../apps/desktop/src-tauri/resources/runtime_agent.tar.gz && mkdir -p ../apps/desktop/src-tauri/resources && tar -czf ../apps/desktop/src-tauri/resources/runtime_agent.tar.gz -C dist runtime_agent",
+    "build:agent": "cd ../../agent && source .venv/bin/activate && export UV_HTTP_TIMEOUT=120 && uv pip install -e . && export PYINSTALLER_CONFIG_DIR=/tmp/pyinstaller_config && pyinstaller runtime_agent.spec && rm -rf ../apps/desktop/src-tauri/resources/runtime_agent.tar.gz && mkdir -p ../apps/desktop/src-tauri/resources && tar -czf ../apps/desktop/src-tauri/resources/runtime_agent.tar.gz -C dist runtime_agent",
     "tauri:build:macos": "npm run build:agent && tauri build --bundles app,dmg --target aarch64-apple-darwin",
     "tauri:build:macos:intel": "npm run build:agent && tauri build --bundles app,dmg --target x86_64-apple-darwin",
     "tauri:build:macos:universal": "npm run build:agent && tauri build --bundles app,dmg --target universal-apple-darwin"

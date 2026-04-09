@@ -6,6 +6,7 @@ import ChatPage from './pages/ChatPage.vue'
 import MemoryPage from './pages/MemoryPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import McpPage from './pages/McpPage.vue'
+import SkillPage from './pages/SkillPage.vue'
 import { normalizePath, pathFromHash } from './router/routes'
 import { appState } from './state/appState'
 
@@ -13,7 +14,8 @@ const routeComponents = {
   '/chat': ChatPage,
   '/settings': SettingsPage,
   '/memory': MemoryPage,
-  '/mcp': McpPage
+  '/mcp': McpPage,
+  '/skill': SkillPage
 }
 
 const currentPath = ref('/chat')

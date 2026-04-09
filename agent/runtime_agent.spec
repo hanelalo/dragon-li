@@ -1,11 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
 
+datas = []
+datas += collect_data_files('trafilatura')
+datas += collect_data_files('courlan')
+datas += collect_data_files('htmldate')
 
 a = Analysis(
     ['runtime_agent.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
