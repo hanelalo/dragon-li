@@ -42,7 +42,7 @@ async def _openai_stream(req: ChatRequestInput, profile: ApiProfile, model: str,
                 "stream": True,
                 "stream_options": {"include_usage": True},
             }
-            tools = get_tools_for_openai(req.enable_web_search, req.cfg)
+            tools = get_tools_for_openai(req.enable_web_search, req.cfg, getattr(req, "explicit_skill_id", None))
             
             from skills.manager import skill_manager
             if not getattr(req, "explicit_skill_id", None):
@@ -145,7 +145,7 @@ async def _openai_stream(req: ChatRequestInput, profile: ApiProfile, model: str,
                 name = tc["function"]["name"]
                 arguments_str = tc["function"]["arguments"]
                 
-                result_str = await execute_tool(name, arguments_str, req.cfg, str(req.session_id))
+                result_str = await execute_tool(name, arguments_str, req.cfg, str(req.session_id), getattr(req, "explicit_skill_id", None))
                     
                 messages.append({
                     "role": "tool",

@@ -218,4 +218,132 @@ class SkillManager:
         finally:
             conn.close()
 
+    def get_allowed_tools(self, skill_id: str) -> list:
+        conn = self.get_db_connection()
+        if not conn:
+            return []
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM capabilities WHERE id = ?", (skill_id,))
+            row = cursor.fetchone()
+            if not row:
+                return []
+            skill_name = row["name"]
+            
+            skill_md_path = os.path.join(self.skills_dir, skill_name, "SKILL.md")
+            if not os.path.exists(skill_md_path):
+                return []
+                
+            frontmatter_dict, _ = self.parse_skill_md(skill_md_path)
+            return frontmatter_dict.get("allowed-tools") or []
+        except Exception as e:
+            logger.error(f"Failed to get allowed tools for skill: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def get_tools_for_skill(self, skill_id: str) -> list:
+        allowed_tools = self.get_allowed_tools(skill_id)
+        
+        conn = self.get_db_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM capabilities WHERE id = ?", (skill_id,))
+            row = cursor.fetchone()
+            if not row:
+                return []
+            skill_name = row["name"]
+            
+            from agent_mcp.client import mcp_manager
+            all_mcp_tools = mcp_manager.get_all_tools()
+            
+            filtered_tools = []
+            for t in all_mcp_tools:
+                if t["function"]["name"] in allowed_tools:
+                    filtered_tools.append(t)
+            
+            scripts_dir = os.path.join(self.skills_dir, skill_name, "scripts")
+            skill_dir = os.path.join(self.skills_dir, skill_name)
+            if os.path.exists(scripts_dir) and os.path.isdir(scripts_dir):
+                import subprocess
+                for script_file in os.listdir(scripts_dir):
+                    script_path = os.path.join(scripts_dir, script_file)
+                    if os.path.isfile(script_path) and os.access(script_path, os.X_OK):
+                        try:
+                            result = subprocess.run([script_path, "--schema"], capture_output=True, text=True, cwd=skill_dir, timeout=5)
+                            if result.returncode == 0:
+                                schema = json.loads(result.stdout.strip())
+                                filtered_tools.append({
+                                    "type": "function",
+                                    "function": schema
+                                })
+                        except Exception as e:
+                            logger.error(f"Failed to load schema from local tool {script_path}: {e}")
+                            
+            return filtered_tools
+            
+        except Exception as e:
+            logger.error(f"Failed to get tools for skill: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def execute_local_tool(self, skill_id: str, tool_name: str, arguments: dict) -> str:
+        conn = self.get_db_connection()
+        if not conn:
+            raise Exception("No DB connection")
+            
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM capabilities WHERE id = ?", (skill_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise Exception("Skill not found")
+            skill_name = row["name"]
+            
+            scripts_dir = os.path.join(self.skills_dir, skill_name, "scripts")
+            skill_dir = os.path.join(self.skills_dir, skill_name)
+            if not os.path.exists(scripts_dir):
+                raise Exception("Skill scripts directory not found")
+                
+            import subprocess
+            target_script = None
+            for script_file in os.listdir(scripts_dir):
+                script_path = os.path.join(scripts_dir, script_file)
+                if os.path.isfile(script_path) and os.access(script_path, os.X_OK):
+                    try:
+                        result = subprocess.run([script_path, "--schema"], capture_output=True, text=True, cwd=skill_dir, timeout=5)
+                        if result.returncode == 0:
+                            schema = json.loads(result.stdout.strip())
+                            if schema.get("name") == tool_name:
+                                target_script = script_path
+                                break
+                    except Exception:
+                        continue
+                        
+            if not target_script:
+                raise Exception(f"Local tool {tool_name} not found in skill {skill_name}")
+                
+            result = subprocess.run(
+                [target_script],
+                input=json.dumps(arguments),
+                capture_output=True,
+                text=True,
+                cwd=skill_dir,
+                timeout=120
+            )
+            
+            if result.returncode != 0:
+                return f"Error: {result.stderr}"
+            return result.stdout
+            
+        except Exception as e:
+            logger.error(f"Failed to execute local tool {tool_name}: {e}")
+            return f"Error: {str(e)}"
+        finally:
+            conn.close()
+
 skill_manager = SkillManager()

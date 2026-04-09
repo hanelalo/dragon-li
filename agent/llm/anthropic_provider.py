@@ -48,7 +48,7 @@ async def _anthropic_stream(req: ChatRequestInput, profile: ApiProfile, model: s
                 "stream": True,
             }
             
-            anthropic_tools = get_tools_for_anthropic(req.enable_web_search, req.cfg)
+            anthropic_tools = get_tools_for_anthropic(req.enable_web_search, req.cfg, getattr(req, "explicit_skill_id", None))
             
             from skills.manager import skill_manager
             if not getattr(req, "explicit_skill_id", None):
@@ -183,7 +183,7 @@ async def _anthropic_stream(req: ChatRequestInput, profile: ApiProfile, model: s
                 name = tc["name"]
                 arguments_str = tc["input"]
                 
-                result_str = await execute_tool(name, arguments_str, req.cfg, str(req.session_id))
+                result_str = await execute_tool(name, arguments_str, req.cfg, str(req.session_id), getattr(req, "explicit_skill_id", None))
                     
                 tool_results.append({
                     "type": "tool_result",
