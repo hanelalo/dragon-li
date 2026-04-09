@@ -36,6 +36,7 @@ pub struct ChatRequestInput {
     pub prompt: ChatPromptLayer,
     #[serde(default)]
     pub enable_web_search: bool,
+    pub explicit_skill_id: Option<String>,
     #[serde(default)]
     pub history: Vec<ChatMessageContext>,
 }

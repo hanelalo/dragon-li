@@ -185,6 +185,7 @@ async function handleDeleteSession(id) {
 async function handleSendMessage(payload, retryMessage = null) {
   let text = typeof payload === 'string' ? payload : payload.text
   let webSearch = typeof payload === 'string' ? false : (payload.webSearch || false)
+  let explicitSkillId = typeof payload === 'string' ? null : (payload.explicitSkillId || null)
 
   if (!activeSessionId.value) {
     // If no active session, create a new one first
@@ -252,7 +253,8 @@ async function handleSendMessage(payload, retryMessage = null) {
       error_code: null,
       error_message: null,
       retryable: null,
-      created_at: new Date(baseTimestampMs).toISOString()
+      created_at: new Date(baseTimestampMs).toISOString(),
+      explicit_skill_id: explicitSkillId
     }
     messages.value.push(userMsg)
     await invoke('message_create', { message: userMsg }).catch(console.error)
@@ -333,6 +335,7 @@ async function handleSendMessage(payload, retryMessage = null) {
         session_id: activeSessionId.value,
         model: null,
         enable_web_search: webSearch,
+        explicit_skill_id: explicitSkillId,
         prompt: {
           system: '',
           runtime: '',
@@ -368,7 +371,7 @@ function handleRetry(failedMessage) {
   if (idx > 0 && messages.value[idx - 1].role === 'user') {
     userText = messages.value[idx - 1].content_md
   }
-  handleSendMessage(userText, failedMessage)
+  handleSendMessage({ text: userText, webSearch: false, explicitSkillId: null }, failedMessage)
 }
 
 function updateDraft(val) {

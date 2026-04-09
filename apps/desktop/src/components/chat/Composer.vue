@@ -1,6 +1,12 @@
 <script setup>
-import { defineProps, ref, watch, nextTick } from 'vue'
+import { defineProps, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { Editor, EditorContent } from '@tiptap/vue-3'
+import StarterKit from '@tiptap/starter-kit'
+import Placeholder from '@tiptap/extension-placeholder'
+import Mention from '@tiptap/extension-mention'
 import { appState } from '../../state/appState.js'
+import { invoke } from '@tauri-apps/api/core'
+import suggestion from './suggestion.js'
 
 const props = defineProps({
   disabled: {
@@ -15,26 +21,56 @@ const props = defineProps({
 
 const emit = defineEmits(['send', 'update:draft'])
 
-const input = ref(props.initialText)
-const textareaRef = ref(null)
 const isWebSearchEnabled = ref(false)
+const editor = ref(null)
 
-watch(() => props.initialText, (val) => {
-  input.value = val
-  nextTick(autoResize)
+onMounted(() => {
+  editor.value = new Editor({
+    extensions: [
+      StarterKit.configure({
+        // Disable features we don't need for a simple chat input
+        heading: false,
+        bulletList: false,
+        orderedList: false,
+        codeBlock: false,
+        blockquote: false,
+        horizontalRule: false,
+      }),
+      Placeholder.configure({
+        placeholder: 'Message...',
+      }),
+      Mention.configure({
+        HTMLAttributes: {
+          class: 'mention',
+        },
+        suggestion,
+      }),
+    ],
+    content: props.initialText,
+    onUpdate: ({ editor }) => {
+      // Just emit HTML or text for draft. We'll extract proper text on send.
+      emit('update:draft', editor.getHTML())
+    },
+  })
 })
 
-function autoResize() {
-  const el = textareaRef.value
-  if (!el) return
-  el.style.height = 'auto'
-  el.style.height = el.scrollHeight + 'px'
-}
+onBeforeUnmount(() => {
+  if (editor.value) {
+    editor.value.destroy()
+  }
+})
 
-function handleInput() {
-  emit('update:draft', input.value)
-  autoResize()
-}
+watch(() => props.initialText, (val) => {
+  if (editor.value && val !== editor.value.getHTML()) {
+    editor.value.commands.setContent(val)
+  }
+})
+
+watch(() => props.disabled, (val) => {
+  if (editor.value) {
+    editor.value.setEditable(!val)
+  }
+})
 
 function toggleWebSearch() {
   if (!appState.settings.tools?.braveSearchApiKey) {
@@ -45,22 +81,91 @@ function toggleWebSearch() {
 }
 
 function handleKeydown(e) {
+  // If suggestion popup is open, don't submit on enter
   if (e.key === 'Enter' && !e.shiftKey) {
+    // We need to check if the suggestion is active. 
+    // We can rely on a class or state from suggestion.js, but simpler:
+    const popup = document.querySelector('.tippy-box')
+    if (popup) return // let tippy handle it
+
     e.preventDefault()
     send()
   }
 }
 
 function send() {
-  if (props.disabled || !input.value.trim()) return
-  emit('send', { text: input.value.trim(), webSearch: isWebSearchEnabled.value })
-  input.value = ''
-  emit('update:draft', '')
-  nextTick(() => {
-    if (textareaRef.value) {
-      textareaRef.value.style.height = 'auto'
+  if (props.disabled || !editor.value) return
+  
+  const text = editor.value.getText()
+  if (!text.trim()) return
+
+  // Extract explicit skill ID if present
+  let explicitSkillId = null
+  const json = editor.value.getJSON()
+  
+  // Very basic traversal to find the first mention node
+  function findMention(node) {
+    if (node.type === 'mention') {
+      return node.attrs.id
     }
+    if (node.content) {
+      for (const child of node.content) {
+        const id = findMention(child)
+        if (id) return id
+      }
+    }
+    return null
+  }
+  
+  if (json.content) {
+    for (const node of json.content) {
+      const id = findMention(node)
+      if (id) {
+        explicitSkillId = id
+        break
+      }
+    }
+  }
+
+  // Use tiptap text serialization to remove the @mention text from the user's prompt
+  let cleanText = ''
+  if (explicitSkillId && json.content) {
+    // If there is an explicit skill mention, filter out the mention node
+    const cleanJson = {
+      type: 'doc',
+      content: json.content.map(block => {
+        if (!block.content) return block;
+        return {
+          ...block,
+          content: block.content.filter(inlineNode => inlineNode.type !== 'mention')
+        };
+      })
+    };
+    
+    // Load it into a temporary editor to get text, or just build text manually.
+    // Simple plain text extractor:
+    function extractText(node) {
+      if (node.type === 'text') return node.text || '';
+      if (node.type === 'hardBreak') return '\n';
+      if (node.content) return node.content.map(extractText).join('');
+      return '';
+    }
+    
+    cleanText = cleanJson.content.map(extractText).join('\n').trim();
+  } else {
+    cleanText = text;
+  }
+
+  if (!cleanText.trim()) return;
+
+  emit('send', { 
+    text: cleanText.trim(), 
+    webSearch: isWebSearchEnabled.value,
+    explicitSkillId: explicitSkillId
   })
+  
+  editor.value.commands.clearContent()
+  emit('update:draft', '')
 }
 </script>
 
@@ -79,18 +184,14 @@ function send() {
           <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
         </svg>
       </button>
-      <textarea
-        ref="textareaRef"
-        v-model="input"
-        @input="handleInput"
-        @keydown="handleKeydown"
-        placeholder="Message..."
-        rows="1"
-        class="composer-input"
-      ></textarea>
+      
+      <div class="editor-wrapper" @keydown="handleKeydown">
+        <editor-content :editor="editor" class="composer-input" />
+      </div>
+
       <button 
         class="send-btn" 
-        :disabled="disabled || !input.trim()" 
+        :disabled="disabled || (editor && !editor.getText().trim())" 
         @click="send"
         title="Send message"
       >
@@ -135,30 +236,50 @@ function send() {
   box-shadow: 0 4px 12px rgba(45, 106, 79, 0.1);
 }
 
-.composer-input {
+.editor-wrapper {
   flex: 1;
-  border: none;
-  background: transparent;
-  resize: none;
+  display: flex;
+  flex-direction: column;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.composer-input {
   padding: 0.6rem 0.8rem;
   font-family: inherit;
   font-size: 1rem;
   color: #2b2623;
-  outline: none;
-  max-height: 200px;
-  overflow-y: auto;
   line-height: 1.4;
-  box-sizing: border-box;
+  min-height: 24px;
 }
 
-.composer-input::placeholder {
+/* Tiptap styles */
+:deep(.ProseMirror) {
+  outline: none;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  -webkit-font-variant-ligatures: none;
+  font-variant-ligatures: none;
+}
+
+:deep(.ProseMirror p) {
+  margin: 0;
+}
+
+:deep(.ProseMirror p.is-editor-empty:first-child::before) {
   color: #a49a8f;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
 }
 
-.composer-input:disabled {
-  background: transparent;
-  color: #2b2623;
-  cursor: text;
+:deep(.mention) {
+  background-color: #e6f2ed;
+  color: #2d6a4f;
+  border-radius: 0.4rem;
+  padding: 0.1rem 0.3rem;
+  font-weight: 500;
 }
 
 .send-btn {

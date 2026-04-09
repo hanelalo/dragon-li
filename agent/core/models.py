@@ -36,6 +36,7 @@ class ChatRequestInput(BaseModel):
     model: Optional[str] = None
     prompt: ChatPromptLayer
     enable_web_search: bool = False
+    explicit_skill_id: Optional[str] = None
     history: List[ChatMessageContext] = []
     cfg: Optional[ApiProfilesConfig] = None
 

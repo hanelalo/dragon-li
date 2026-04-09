@@ -16,6 +16,7 @@ from core.models import (
     MemoryExtractRequest
 )
 from core.prompts import TITLE_GENERATION_PROMPT, MEMORY_EXTRACTION_PROMPT, CHAT_SYSTEM_PROMPT_TEMPLATE
+from skills.manager import skill_manager
 
 from llm.openai_provider import _openai_stream
 from llm.anthropic_provider import _anthropic_stream
@@ -23,6 +24,25 @@ from llm.anthropic_provider import _anthropic_stream
 logger = logging.getLogger("uvicorn.error")
 
 def _build_chat_system_content(req: ChatRequestInput) -> str:
+    # If explicitly invoked a skill, replace the system prompt with the skill's markdown body
+    if req.explicit_skill_id:
+        conn = skill_manager.get_db_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM capabilities WHERE id = ?", (req.explicit_skill_id,))
+            row = cursor.fetchone()
+            if row:
+                skill_name = row["name"]
+                import os
+                skill_md_path = os.path.join(skill_manager.skills_dir, skill_name, "SKILL.md")
+                if os.path.exists(skill_md_path):
+                    try:
+                        _, markdown_body = skill_manager.parse_skill_md(skill_md_path)
+                        return markdown_body
+                    except Exception as e:
+                        logger.error(f"Failed to load explicit skill {skill_name}: {e}")
+            conn.close()
+
     memory_part = req.prompt.memory.strip()
     memory_section = f"# Context (Injected Memories)\n{memory_part}\n\n" if memory_part else ""
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

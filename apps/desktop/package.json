@@ -16,8 +16,14 @@
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tiptap/extension-mention": "^3.22.3",
+    "@tiptap/extension-placeholder": "^3.22.3",
+    "@tiptap/pm": "^3.22.3",
+    "@tiptap/starter-kit": "^3.22.3",
+    "@tiptap/vue-3": "^3.22.3",
     "dompurify": "^3.3.3",
     "marked": "^17.0.6",
+    "tippy.js": "^6.3.7",
     "vue": "^3.5.0"
   },
   "devDependencies": {

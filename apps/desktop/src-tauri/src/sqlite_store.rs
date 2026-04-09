@@ -232,6 +232,7 @@ pub struct MessageRecord {
     pub retryable: Option<i64>,
     pub created_at: String,
     pub deleted_at: Option<String>,
+    pub explicit_skill_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,6 +253,7 @@ pub struct NewMessage {
     pub error_message: Option<String>,
     pub retryable: Option<i64>,
     pub created_at: String,
+    pub explicit_skill_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,6 +367,7 @@ impl SqliteStore {
         let _ = conn.execute("ALTER TABLE messages ADD COLUMN reasoning_md TEXT", []);
         let _ = conn.execute("ALTER TABLE mcp_connectors ADD COLUMN mcp_type TEXT NOT NULL DEFAULT 'stdio'", []);
         let _ = conn.execute("ALTER TABLE mcp_connectors ADD COLUMN config_content TEXT NOT NULL DEFAULT '{}'", []);
+        let _ = conn.execute("ALTER TABLE messages ADD COLUMN explicit_skill_id TEXT", []);
         Ok(())
     }
 
@@ -423,7 +426,7 @@ impl SqliteStore {
         let mut stmt = conn
             .prepare(
                 "SELECT id, session_id, role, content_md, reasoning_md, provider, model, tokens_in, tokens_out, latency_ms,
-                        parent_message_id, status, error_code, error_message, retryable, created_at, deleted_at
+                        parent_message_id, status, error_code, error_message, retryable, created_at, deleted_at, explicit_skill_id
                  FROM messages
                  WHERE session_id = ?1 AND role = 'user' AND deleted_at IS NULL
                  ORDER BY created_at DESC
@@ -450,6 +453,7 @@ impl SqliteStore {
                     retryable: r.get(14)?,
                     created_at: r.get(15)?,
                     deleted_at: r.get(16)?,
+                    explicit_skill_id: r.get(17)?,
                 })
             })
             .map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
@@ -498,8 +502,8 @@ impl SqliteStore {
             "INSERT OR REPLACE INTO messages (
                 id, session_id, role, content_md, reasoning_md, provider, model,
                 tokens_in, tokens_out, latency_ms, parent_message_id, status,
-                error_code, error_message, retryable, created_at, deleted_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, NULL)",
+                error_code, error_message, retryable, created_at, deleted_at, explicit_skill_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, NULL, ?17)",
             params![
                 item.id,
                 item.session_id,
@@ -516,7 +520,8 @@ impl SqliteStore {
                 item.error_code,
                 item.error_message,
                 item.retryable,
-                item.created_at
+                item.created_at,
+                item.explicit_skill_id
             ],
         )
         .map_err(map_write_error)?;
@@ -552,7 +557,7 @@ impl SqliteStore {
         let mut stmt = conn
             .prepare(
                 "SELECT id, session_id, role, content_md, reasoning_md, provider, model, tokens_in, tokens_out, latency_ms,
-                        parent_message_id, status, error_code, error_message, retryable, created_at, deleted_at
+                        parent_message_id, status, error_code, error_message, retryable, created_at, deleted_at, explicit_skill_id
                  FROM messages
                  WHERE session_id = ?1 AND deleted_at IS NULL
                  ORDER BY created_at ASC",
@@ -578,6 +583,7 @@ impl SqliteStore {
                     retryable: r.get(14)?,
                     created_at: r.get(15)?,
                     deleted_at: r.get(16)?,
+                    explicit_skill_id: r.get(17)?,
                 })
             })
             .map_err(|e| StoreError::DbReadFailed(e.to_string()))?;
@@ -1000,6 +1006,7 @@ mod tests {
                 error_message: None,
                 retryable: None,
                 created_at: "2026-04-05T10:01:00+08:00".to_string(),
+                explicit_skill_id: None,
             })
             .expect("create message");
 
@@ -1068,6 +1075,7 @@ mod tests {
                 error_message: None,
                 retryable: None,
                 created_at: "2026-04-05T10:01:00+08:00".to_string(),
+                explicit_skill_id: None,
             })
             .expect("create message");
 
@@ -1112,6 +1120,7 @@ mod tests {
                 error_message: None,
                 retryable: None,
                 created_at: "2026-04-05T10:01:00+08:00".to_string(),
+                explicit_skill_id: None,
             })
             .expect_err("orphan message should fail");
         assert!(matches!(err, StoreError::SessionNotFound(_)));

@@ -79,12 +79,15 @@ async function copyText(text, msgId) {
         </div>
         <div class="content">
           <div v-if="msg.reasoning_md" class="markdown-body reasoning-block" :class="{'streaming-reasoning': msg.status === 'streaming'}">
-            <details :open="msg.status === 'streaming' || true">
+            <details :open="msg.status === 'streaming'">
               <summary>思考过程</summary>
               <div v-html="renderMarkdown(msg.reasoning_md)"></div>
             </details>
           </div>
           <div v-if="msg.content_md" class="markdown-body" v-html="renderMarkdown(msg.content_md)"></div>
+          <div v-if="msg.explicit_skill_id" class="skill-tag">
+            <span>Using Skill: {{ msg.explicit_skill_id }}</span>
+          </div>
           <span v-else-if="msg.status === 'streaming'" class="streaming-indicator">
             <span class="dot"></span><span class="dot"></span><span class="dot"></span>
           </span>
@@ -424,8 +427,27 @@ async function copyText(text, msgId) {
   background-color: rgba(255, 255, 255, 0.1);
 }
 
+/* User Mention display style */
+:deep(.message.user .mention) {
+  background-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  border-radius: 0.4rem;
+  padding: 0.1rem 0.3rem;
+  font-weight: 500;
+}
+
 .message.assistant .content {
   border-top-left-radius: 4px;
+}
+
+.skill-tag {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #fff;
+  background-color: rgba(255, 255, 255, 0.2);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
 }
 
 pre {

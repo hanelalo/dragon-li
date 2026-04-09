@@ -556,6 +556,8 @@ mod tests {
                 memory: "memory".to_string(),
                 user: "hello".to_string(),
             },
+            enable_web_search: false,
+            explicit_skill_id: None,
             history: vec![],
         }
     }
