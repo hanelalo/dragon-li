@@ -1,42 +1,54 @@
 <script setup>
-import { defineProps, ref, watch, nextTick } from 'vue'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
+import { defineProps, ref, watch, onActivated, nextTick } from 'vue'
 import { open } from '@tauri-apps/plugin-shell'
+import MarkdownBlock from './MarkdownBlock.vue'
 
 const props = defineProps({
   messages: {
     type: Array,
     required: true
+  },
+  sessionId: {
+    type: String,
+    default: ''
   }
 })
 
 const timelineRef = ref(null)
 
+let isScrolling = false
+
+function scrollToBottom() {
+  if (timelineRef.value) {
+    timelineRef.value.scrollTop = timelineRef.value.scrollHeight
+  }
+}
+
 // Auto-scroll when messages update
 watch(
   () => props.messages,
-  async () => {
-    await nextTick()
-    if (timelineRef.value) {
-      timelineRef.value.scrollTop = timelineRef.value.scrollHeight
+  () => {
+    if (!isScrolling) {
+      isScrolling = true
+      requestAnimationFrame(() => {
+        scrollToBottom()
+        isScrolling = false
+      })
     }
   },
   { deep: true }
 )
 
+// Scroll to bottom when component is activated (e.g. returning from another page)
+onActivated(async () => {
+  await nextTick()
+  scrollToBottom()
+})
+
 function formatTime(isoString) {
   if (!isoString) return ''
   const d = new Date(isoString)
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-// Convert markdown to sanitized HTML
-function renderMarkdown(mdText) {
-  if (!mdText) return ''
-  // marked.parse returns a string or promise. By default it's synchronous.
-  const rawHtml = marked.parse(mdText)
-  return DOMPurify.sanitize(rawHtml, { ADD_ATTR: ['target', 'class', 'open'] })
 }
 
 const emit = defineEmits(['retry'])
@@ -97,10 +109,10 @@ async function handleTimelineClick(event) {
           <div v-if="msg.reasoning_md" class="markdown-body reasoning-block" :class="{'streaming-reasoning': msg.status === 'streaming'}">
             <details :open="msg.status === 'streaming'">
               <summary>思考过程</summary>
-              <div v-html="renderMarkdown(msg.reasoning_md)"></div>
+              <MarkdownBlock :content="msg.reasoning_md" />
             </details>
           </div>
-          <div v-if="msg.content_md" class="markdown-body" v-html="renderMarkdown(msg.content_md)"></div>
+          <MarkdownBlock v-if="msg.content_md" class="markdown-body" :content="msg.content_md" />
           <div v-if="msg.explicit_skill_id" class="skill-tag">
             <span>Using Skill: {{ msg.explicit_skill_id }}</span>
           </div>

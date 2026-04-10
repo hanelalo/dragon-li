@@ -406,6 +406,7 @@ function updateDraft(val) {
       </header>
       <MessageTimeline 
         :messages="messages"
+        :session-id="activeSessionId"
         @retry="handleRetry" 
       />
       <Composer
