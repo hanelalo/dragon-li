@@ -66,12 +66,6 @@ watch(() => props.initialText, (val) => {
   }
 })
 
-watch(() => props.disabled, (val) => {
-  if (editor.value) {
-    editor.value.setEditable(!val)
-  }
-})
-
 function toggleWebSearch() {
   if (!appState.settings.tools?.braveSearchApiKey) {
     alert('Please configure Brave Search API Key in Settings first')
