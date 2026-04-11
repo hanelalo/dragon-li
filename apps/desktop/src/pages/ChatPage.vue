@@ -25,10 +25,6 @@ const activeSessionId = computed({
   set: (val) => { appState.runtime.activeSessionId = val }
 })
 
-const availableProfiles = computed(() => {
-  return appState.settings.profiles.filter(p => p.enabled)
-})
-
 async function loadConfig() {
   try {
     const res = await invoke('config_get')
@@ -394,15 +390,6 @@ function updateDraft(val) {
         <div class="header-left">
           <h2>{{ sessionList.find(s => s.id === activeSessionId)?.title || (activeSessionId ? 'Chat' : 'Start a New Chat') }}</h2>
         </div>
-        <div class="header-right">
-          <label>模型:</label>
-          <select class="profile-select" v-model="appState.runtime.activeProfileId">
-            <option v-for="p in availableProfiles" :key="p.id" :value="p.id">
-              {{ p.name }} ({{ p.default_model }})
-            </option>
-            <option v-if="availableProfiles.length === 0" value="" disabled>无可用 Profile，请前往设置添加</option>
-          </select>
-        </div>
       </header>
       <MessageTimeline 
         :messages="messages"
@@ -451,26 +438,5 @@ function updateDraft(val) {
   margin: 0;
   font-size: 1.2rem;
   color: #3b3531;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: #666;
-}
-
-.profile-select {
-  padding: 0.2rem 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #fdfdfd;
-  font-size: 0.85rem;
-  color: #333;
-}
-.profile-select:focus {
-  outline: none;
-  border-color: #888;
 }
 </style>
